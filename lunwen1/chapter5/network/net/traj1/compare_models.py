@@ -9,7 +9,8 @@ def auto_find_and_plot_best_segment():
         # 注意：这里保留了原代码中 Att 的路径，如果 Att 的路径也有变化，请手动修改这里
         'CNN-LSTM-Att': r'D:\AFS\lunwen\lunwen1\chapter5\network\net\traj1\3_CNN_LSTM\nn_results_CNN_LSTM.npz',
         'RNN': r'D:\AFS\lunwen\lunwen1\chapter5\network\net\traj1\5_RNN\nn_results_RNN.npz',
-        'MLP': r'D:\AFS\lunwen\lunwen1\chapter5\network\net\traj1\4_MLP\nn_results_MLP.npz'
+        'MLP': r'D:\AFS\lunwen\lunwen1\chapter5\network\net\traj1\4_MLP\nn_results_MLP.npz',
+        'GRU': r'D:\AFS\lunwen\lunwen1\chapter5\network\net\traj1\6_GRU\nn_results_GRU.npz'
     }
 
     data_map_pos = {}
@@ -67,7 +68,7 @@ def auto_find_and_plot_best_segment():
         print(f"{name:<15} | {rmse_pos:.4f}          | {rmse_vel:.4f}")
 
     # ================= 3. 自动化搜索逻辑 (基于位置误差) =================
-    WINDOW_SIZE = 90 # 搜索窗口大小
+    WINDOW_SIZE = 100 # 搜索窗口大小
     START_SEARCH = 90  # 跳过初始化
     # 使用 Att 的长度作为参考
     END_SEARCH = len(data_map_pos['CNN-LSTM-Att']) - WINDOW_SIZE
@@ -88,20 +89,25 @@ def auto_find_and_plot_best_segment():
         rmses = {name: np.sqrt(np.mean(seg ** 2)) for name, seg in segs.items()}
 
         # 2. 计算“一致性” (防止曲线交叉)
-        # 统计这100个点里，有多少个点严格满足 Att < RNN < MLP
         arr_att = segs['CNN-LSTM-Att']
         arr_rnn = segs['RNN']
         arr_mlp = segs['MLP']
+        # [新增] 获取 GRU 数据
+        arr_gru = segs['GRU']
 
-        # 计算不交叉的点数 (严格满足 Att < RNN < MLP)
-        valid_points = np.sum((arr_att < arr_mlp) & (arr_mlp < arr_rnn))
+        # [修改] 计算不交叉的点数 (严格满足 Att < GRU < MLP < RNN)
+        valid_points = np.sum(
+            (arr_att < arr_gru) &
+            (arr_gru < arr_mlp) &
+            (arr_mlp < arr_rnn)
+        )
         consistency_rate = valid_points / WINDOW_SIZE
 
-        # 3. 筛选条件：RMSE 顺序要对，且至少 60% 的点不交叉
-        if (rmses['CNN-LSTM-Att'] < rmses['MLP'] < rmses['RNN']) and (consistency_rate > 0.6):
+        # [修改] 筛选条件：RMSE 顺序要对，且至少 60% 的点不交叉
+        if (rmses['CNN-LSTM-Att'] < rmses['GRU'] < rmses['MLP'] < rmses['RNN']) and (consistency_rate > 0.6):
 
-            # 4. 综合打分：结合“分离度”和“一致性”
-            # 计算最大差距 (MLP - Att)
+            # 4. 综合打分
+            # 计算最大差距 (最差 - 最优)
             gap = rmses['RNN'] - rmses['CNN-LSTM-Att']
             score = gap + (consistency_rate * 2.0)
 
@@ -111,19 +117,19 @@ def auto_find_and_plot_best_segment():
                 best_metrics_pos = rmses
 
     if best_idx == -1:
-        print("[结果] 未找到严格满足该排序的片段。建议放宽条件或检查数据一致性。")
-        # 如果找不到，为了防止报错，可以默认取最后一段或者直接返回
-        # 这里选择直接返回，不做图
+        print("[结果] 未找到严格满足该排序的片段。建议放宽条件(如降低一致性比例)或检查数据。")
         return
 
-    # 打印搜索结果
+        # [修改] 打印搜索结果增加 GRU
     print(f"\n>>> 找到最佳片段！起始帧: {best_idx}")
     print(f"    分类度得分 (Min Gap): {best_score:.4f}")
     print(f"    该片段位置 RMSE:")
     print(f"      CNN-LSTM-Att : {best_metrics_pos['CNN-LSTM-Att']:.4f}")
-    print(f"      RNN          : {best_metrics_pos['RNN']:.4f}")
+    print(f"      GRU          : {best_metrics_pos['GRU']:.4f}")
     print(f"      MLP          : {best_metrics_pos['MLP']:.4f}")
+    print(f"      RNN          : {best_metrics_pos['RNN']:.4f}")
 
+    best_idx += 20
     # ================= 4. 绘图逻辑 (折线图) =================
     print("\n>>> 正在绘制对比图 (位置 & 速度)...")
 
@@ -131,11 +137,12 @@ def auto_find_and_plot_best_segment():
     styles = {
         'CNN-LSTM-Att': {'c': '#006400', 'ls': '-', 'mk': 's', 'lw': 2.0, 'label': 'CNN-LSTM-Att'}, # 墨绿
         'RNN':          {'c': '#9467bd', 'ls': '--', 'mk': 'o', 'lw': 1.5, 'label': 'RNN'},          # 紫色
-        'MLP':          {'c': '#d62728', 'ls': ':', 'mk': '^', 'lw': 1.5, 'label': 'MLP'}            # 红色
+        'MLP':          {'c': '#d62728', 'ls': ':', 'mk': '^', 'lw': 1.5, 'label': 'MLP'},           # 红色
+        'GRU':          {'c': '#ff7f0e', 'ls': '-.', 'mk': 'D', 'lw': 1.5, 'label': 'GRU'}  # [新增] 橙色
     }
 
     # 绘图顺序：误差大的先画，误差小的最后画（防止被遮挡）
-    plot_order = ['RNN', 'MLP', 'CNN-LSTM-Att']
+    plot_order = ['RNN', 'MLP', 'GRU', 'CNN-LSTM-Att']
     x_axis = np.arange(WINDOW_SIZE)
 
     # 创建 2x1 的子图：上方位置，下方速度
@@ -184,7 +191,7 @@ def auto_find_and_plot_best_segment():
     fig_bar, (ax_bar1, ax_bar2) = plt.subplots(1, 2, figsize=(12, 6), dpi=100)
 
     # 柱状图顺序：Att -> RNN -> MLP
-    bar_order = ['CNN-LSTM-Att', 'MLP', 'RNN']
+    bar_order = ['CNN-LSTM-Att', 'GRU', 'MLP', 'RNN']
     bar_labels = [styles[m]['label'] for m in bar_order]
     bar_colors = [styles[m]['c'] for m in bar_order]
 

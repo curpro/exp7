@@ -11,22 +11,25 @@ FILES = {
     # 你提供的 RNN 路径
     'RNN': r'D:\AFS\lunwen\lunwen1\chapter5\network\net\traj1\5_RNN\nn_results_RNN.npz',
     # 你提供的 MLP 路径
-    'MLP': r'D:\AFS\lunwen\lunwen1\chapter5\network\net\traj1\4_MLP\nn_results_MLP.npz'
+    'MLP': r'D:\AFS\lunwen\lunwen1\chapter5\network\net\traj1\4_MLP\nn_results_MLP.npz',
+
+    'GRU': r'D:\AFS\lunwen\lunwen1\chapter5\network\net\traj1\6_GRU\nn_results_GRU.npz'
 }
 
 # 2. 统一样式定义 (参考 compare_models.py 的颜色和线型)
 STYLES = {
     'CNN-LSTM-Att': {'c': '#006400', 'ls': '-', 'lw': 1.5, 'label': 'CNN-LSTM-Att'},  # 墨绿
     'RNN': {'c': '#9467bd', 'ls': '-', 'lw': 1.0, 'label': 'RNN'},  # 紫色
-    'MLP': {'c': '#d62728', 'ls': '-', 'lw': 1.0, 'label': 'MLP'}  # 红色
+    'MLP': {'c': '#d62728', 'ls': '-', 'lw': 1.0, 'label': 'MLP'},  # 红色
+    'GRU': {'c': '#ff7f0e', 'ls': '-', 'lw': 1.0, 'label': 'GRU'}
 }
 
 # 3. 绘图顺序设置
 # 柱状图展示顺序 (通常把最好的放一边)
-BAR_ORDER = ['CNN-LSTM-Att', 'MLP', 'RNN']
+BAR_ORDER = ['CNN-LSTM-Att', 'GRU', 'MLP', 'RNN']
 
 # 折线图绘制顺序 (误差大的先画，避免遮挡误差小的)
-PLOT_ORDER = ['RNN', 'MLP', 'CNN-LSTM-Att']
+PLOT_ORDER = ['RNN', 'MLP', 'GRU', 'CNN-LSTM-Att']
 
 DT = 1 / 30
 UNIFIED_START_FRAME = 90  # 忽略前 90 帧初始化误差

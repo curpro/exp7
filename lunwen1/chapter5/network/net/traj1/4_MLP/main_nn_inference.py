@@ -18,7 +18,7 @@ from lunwen1.chapter5.bayes_imm.imm_lib_enhanced import IMMFilterEnhanced
 
 # ================= 配置 =================
 # [修改] 指向您的 F16 测试文件路径
-TEST_DATA_PATH = r'/dataSet/test_data/f16_super_maneuver_a.csv'
+TEST_DATA_PATH = r'D:\AFS\lunwen\dataSet\test_data\f16_super_maneuver_a.csv'
 
 MODEL_PATH = 'imm_param_net.pth'
 SCALER_PATH = 'scaler_params.json'

@@ -19,7 +19,7 @@ from lunwen1.chapter5.bayes_imm.imm_lib_enhanced import IMMFilterEnhanced
 
 # ================= 配置 =================
 # [修改] 指向您的 F16 测试文件路径
-TEST_DATA_PATH = r'/dataSet/test_data/f16_super_maneuver_a.csv'
+TEST_DATA_PATH = r'D:\AFS\lunwen\dataSet\test_data\f16_super_maneuver_a.csv'
 
 MODEL_PATH = 'imm_param_net.pth'
 SCALER_PATH = 'scaler_params.json'
@@ -31,6 +31,30 @@ SAVGOL_POLY = 2
 
 
 # === [核心修改] 模型定义必须与训练代码完全一致 ===
+class TimeSeriesAttention(nn.Module):
+    """
+    注意力机制层：让网络自动加权序列中重要的时间步
+    """
+
+    def __init__(self, hidden_dim):
+        super(TimeSeriesAttention, self).__init__()
+        self.W = nn.Linear(hidden_dim, hidden_dim)
+        self.v = nn.Linear(hidden_dim, 1, bias=False)
+
+    def forward(self, h):
+        # h: (Batch, Seq_Len, Hidden_Dim)
+        # score: (Batch, Seq_Len, 1)
+        score = torch.tanh(self.W(h))
+        score = self.v(score)
+
+        # weights: (Batch, Seq_Len, 1)
+        attention_weights = F.softmax(score, dim=1)
+
+        # context: (Batch, Hidden_Dim) -> 加权求和
+        context_vector = torch.sum(attention_weights * h, dim=1)
+        return context_vector, attention_weights
+
+
 class ParamPredictorEnhanced(nn.Module):
     def __init__(self, input_dim=9, output_dim=9):
         super(ParamPredictorEnhanced, self).__init__()
@@ -58,6 +82,9 @@ class ParamPredictorEnhanced(nn.Module):
         # 输入维度 256，隐藏层 128，双向 -> 输出 256
         self.lstm = nn.LSTM(input_size=128, hidden_size=64,
                             num_layers=2, batch_first=True, bidirectional=True, dropout=0.2)
+
+        # 3. Attention (聚焦关键时刻)
+        self.attention = TimeSeriesAttention(hidden_dim=128)
 
         # 4. 全连接层 (输出参数)
         self.fc = nn.Sequential(
@@ -89,8 +116,11 @@ class ParamPredictorEnhanced(nn.Module):
         lstm_out, _ = self.lstm(x)
         # lstm_out: (Batch, 90, 256)
 
+        # --- Attention Block ---
+        # 将整个序列聚合为一个向量，但重点关注重要时刻
+        context_vector, _ = self.attention(lstm_out)
         # context_vector: (Batch, 256)
-        context_vector = lstm_out[:, -1, :]
+
         # --- MLP Head ---
         out = self.fc(context_vector)
 

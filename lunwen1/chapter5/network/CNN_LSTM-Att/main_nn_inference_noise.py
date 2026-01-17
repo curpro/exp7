@@ -10,8 +10,6 @@ import os
 import matplotlib.pyplot as plt  # [新增] 用于画图
 from collections import deque
 from scipy.signal import savgol_filter
-import lunwen1.chapter5.network.paper_plotting as pp
-import time
 
 # 请确保路径与您项目结构一致
 from lunwen1.chapter5.bayes_imm.imm_lib_enhanced import IMMFilterEnhanced
@@ -270,7 +268,7 @@ def main_inference():
         print(f"Error: {e}")
         return
 
-    noise_levels = [5, 10, 15, 20, 25, 30]
+    noise_levels = [5, 7.5, 10, 12.5, 15, 17.5, 20, 22.5, 25, 27.5, 30]
 
     # 1. 存储 Seed 42 的结果 (用于画实线，也是阴影的中心骨架)
     results_main_adapt = []
@@ -363,7 +361,7 @@ def main_inference():
         # --- 1. 画 Fixed IMM ---
         # A. 实线：Seed 42
         ax1.plot(noise_levels, res_42_fixed_arr[:, i], marker='^', linestyle='--', color=color_fix,
-                 label='Fixed IMM (Seed 42)', linewidth=1.5)
+                 label='BO-IMM (Seed 42)', linewidth=1.5)
 
         # B. 阴影：【关键修改】 以 Seed 42 为中心，上下加减 Std
         #    这样线一定在阴影正中间
@@ -371,7 +369,7 @@ def main_inference():
                          res_42_fixed_arr[:, i] - std_fixed_arr[:, i],
                          res_42_fixed_arr[:, i] + std_fixed_arr[:, i],
                          color=color_fix, alpha=0.15, linewidth=0,
-                         label='Fixed IMM (± σ)')
+                         label='BO-IMM (± σ)')
 
         # --- 2. 画 NN-IMM ---
         # A. 实线：Seed 42
@@ -405,10 +403,19 @@ def main_inference():
         ax1.grid(True, linestyle='--', alpha=0.6)
 
         # SNR 轴
+        # 1. 筛选出 5, 10, 15... 的刻度位置和对应的 SNR
+        target_indices = [idx for idx, val in enumerate(noise_levels) if val % 5 == 0]
+        target_ticks = [noise_levels[i] for i in target_indices]
+        target_snrs = [f"{snr_list[i]:.1f}" for i in target_indices]
+
+        # 2. 强制下轴 (Noise) 只显示 5, 10, 15...
+        ax1.set_xticks(target_ticks)
+
+        # 3. 设置上轴 (SNR) 与下轴完全对齐
         ax2 = ax1.twiny()
         ax2.set_xlim(ax1.get_xlim())
-        ax2.set_xticks(noise_levels)
-        ax2.set_xticklabels([f"{s:.1f}" for s in snr_list])
+        ax2.set_xticks(target_ticks)  # 位置和下轴一致
+        ax2.set_xticklabels(target_snrs)  # 标签显示对应的 SNR
         ax2.set_xlabel('SNR (dB)', fontsize=11)
         ax2.tick_params(axis='x')
 

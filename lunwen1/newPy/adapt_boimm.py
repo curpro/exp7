@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-
-
-
+from matplotlib.patches import Rectangle
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes, BboxConnector
+from matplotlib.transforms import Bbox, TransformedBbox
 from lunwen1.chapter5.bayes_imm.imm_lib_enhanced import IMMFilterEnhanced
 from lunwen1.chapter5.bayes_imm.adaptive_imm_lib import JilkovAdaptiveIMM
 import lunwen1.chapter5.network.paper_plotting as pp
@@ -15,6 +15,25 @@ import lunwen1.chapter5.network.paper_plotting as pp
 CSV_FILE_PATH = r'D:\AFS\lunwen\dataSet\test_data\f16_super_maneuver_a.csv'
 DT = 1 / 30  # 30Hz 采样率
 MEAS_NOISE_STD = 15 # 观测噪声标准差 (米)
+
+
+# ==========================================
+# [新增] 样式配置 (用于 Combine Plot)
+# ==========================================
+# Global Style: 细实线，高透明度
+STYLE_GLOBAL = {
+    'Adaptive-IMM': {'c': 'm',          'lw': 1.8, 'alpha': 0.95, 'zorder': 10, 'label': 'ATP-IMM'},
+    'Bo-IMM':       {'c': '#00AA00',    'lw': 1.2, 'alpha': 0.85, 'zorder': 8,  'label': 'Bo-IMM'}
+}
+
+# Local Style: 带 Marker，不透明
+STYLE_LOCAL = {
+    'Adaptive-IMM': {'mk': '+', 'ms': 9, 'ls': '-',  'lw': 1.2, 'alpha': 1.0},
+    'Bo-IMM':       {'mk': 'o', 'ms': 6, 'ls': '--', 'lw': 1.2, 'alpha': 0.9}
+}
+
+DISPLAY_ORDER = ['Bo-IMM', 'Adaptive-IMM']
+MARK_EVERY = 5 # 子图标记间隔
 
 def load_csv_data(filepath):
     """读取 CSV 并转换为 (9, N) 的状态矩阵"""
@@ -48,6 +67,99 @@ def run_filter(filter_obj, meas_pos, dt):
         model_probs[:, i] = probs
 
     return est_state, model_probs
+
+
+# ==========================================
+# [新增] Combine Plot 绘制函数
+# ==========================================
+def draw_combined_figure(data_dict, title_text, y_label, best_idx, window_size):
+    fig, ax = plt.subplots(figsize=(10, 6), dpi=120)
+
+    # 准备数据
+    min_len = min(len(v) for v in data_dict.values())
+    time_axis = np.arange(min_len) * DT
+
+    all_global_values = []
+    local_max_val = 0
+    zoom_start = best_idx
+    zoom_end = best_idx + window_size
+
+    # 1. 绘制全局背景 (Global Style)
+    # 跳过前80帧初始化
+    PLOT_START = 80
+
+    for name in DISPLAY_ORDER:
+        if name not in data_dict: continue
+
+        full_y = data_dict[name]
+        plot_y = full_y[PLOT_START:]
+        plot_x = time_axis[PLOT_START:len(full_y)]
+
+        all_global_values.extend(plot_y)
+
+        # 记录局部最大值 (用于防撞)
+        if zoom_end <= len(full_y):
+            local_seg = full_y[zoom_start:zoom_end]
+            if len(local_seg) > 0:
+                local_max_val = max(local_max_val, np.max(local_seg))
+
+        s = STYLE_GLOBAL[name]
+        ax.plot(plot_x, plot_y,
+                c=s['c'], ls='-', lw=s['lw'],
+                alpha=s['alpha'], zorder=s['zorder'], label=s['label'])
+
+    # 2. 设置 Y 轴留白
+    global_data_max = np.percentile(all_global_values, 99.5) if all_global_values else 1.0
+    ax.set_ylim(0, global_data_max * 2.5)
+
+    ax.set_title(title_text, fontsize=14, fontweight='bold')
+    ax.set_xlabel('Time (s)', fontsize=12)
+    ax.set_ylabel(y_label, fontsize=12)
+    ax.grid(True, linestyle='--', alpha=0.3)
+    ax.legend(loc='upper right', framealpha=0.95, shadow=True)
+
+    # 3. 绘制悬浮子图 (Local Style)
+    axins = ax.inset_axes([0.05, 0.55, 0.45, 0.40])
+    local_x = np.arange(window_size)
+    local_vals_inset = []
+
+    for name in DISPLAY_ORDER:
+        if name not in data_dict: continue
+
+        local_y = data_dict[name][zoom_start:zoom_end]
+        local_vals_inset.extend(local_y)
+
+        s_glob = STYLE_GLOBAL[name]
+        s_loc = STYLE_LOCAL[name]
+
+        axins.plot(local_x, local_y,
+                   c=s_glob['c'], ls=s_loc['ls'], lw=s_loc['lw'],
+                   marker=s_loc['mk'], ms=s_loc['ms'], markevery=MARK_EVERY,
+                   alpha=s_loc['alpha'], zorder=s_glob['zorder'])
+
+    axins.set_xlim(0, window_size)
+    if local_vals_inset:
+        axins.set_ylim(0, max(local_vals_inset) * 1.15)
+    axins.grid(True, linestyle=':', alpha=0.5)
+
+    # 4. 连接线与框
+    box_x0 = time_axis[zoom_start]
+    box_width = time_axis[zoom_end - 1] - box_x0
+    box_height = local_max_val
+
+    rect_patch = Rectangle((box_x0, 0), box_width, box_height,
+                           fill=False, edgecolor="k", linestyle="--", linewidth=0.8, alpha=0.6)
+    ax.add_patch(rect_patch)
+
+    rect_bbox = Bbox.from_bounds(box_x0, 0, box_width, box_height)
+    rect_transform = TransformedBbox(rect_bbox, ax.transData)
+
+    ax.add_patch(BboxConnector(axins.bbox, rect_transform, loc1=3, loc2=2, edgecolor="k", linestyle="--", linewidth=0.8,
+                               alpha=0.5))
+    ax.add_patch(BboxConnector(axins.bbox, rect_transform, loc1=4, loc2=1, edgecolor="k", linestyle="--", linewidth=0.8,
+                               alpha=0.5))
+
+    return fig
 
 def main():
     # 1. 加载数据
@@ -427,6 +539,27 @@ def main():
         # 备选: 如果没找到显著优势，找个差距最小的(或者随便最后一段)
         best_win_idx = search_end - 1
         print("  [提示] 未找到显著优势窗口，默认显示最后一段。")
+
+    data_pos = {
+        'Bo-IMM': dist_err_bo,
+        'Adaptive-IMM': dist_err_adp
+    }
+
+    # 2. 准备速度数据
+    data_vel = {
+        'Bo-IMM': vel_err_bo,
+        'Adaptive-IMM': vel_err_adp
+    }
+
+    print("\n>>> 生成 Combined Plot (Pos)...")
+    fig_comb_pos = draw_combined_figure(data_pos, 'Position Error', 'Position Error (m)', best_win_idx,
+                                        ZOOM_WIN_SIZE)
+    fig_comb_pos.show()
+
+    print(">>> 生成 Combined Plot (Vel)...")
+    fig_comb_vel = draw_combined_figure(data_vel, 'Velocity Error', 'Velocity Error (m/s)', best_win_idx,
+                                        ZOOM_WIN_SIZE)
+    fig_comb_vel.show()
 
     # 3. 准备绘图数据
     slice_idx = slice(best_win_idx, best_win_idx + ZOOM_WIN_SIZE)

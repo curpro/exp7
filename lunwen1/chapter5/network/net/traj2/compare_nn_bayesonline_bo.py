@@ -34,7 +34,7 @@ DISPLAY_ORDER = ['NN-IMM', 'bayesOnline', 'Bo-IMM']
 
 # 搜索参数
 WINDOW_SIZE = 100
-START_SEARCH = 80
+START_SEARCH = 90
 MARK_EVERY = 10  # 标记间隔
 
 

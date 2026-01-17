@@ -1,5 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes, BboxConnector
+from matplotlib.transforms import Bbox, TransformedBbox
 import os
 
 # ================= 1. 配置区域 =================
@@ -45,6 +48,84 @@ GLOBAL_STYLES = {
 # 显示顺序 (图例顺序: Best -> Middle -> Worst)
 DISPLAY_ORDER = ['Pos + Vel + Acc', 'Pos + Vel', 'Pos']
 
+
+def draw_combined_figure(data_dict, title_text, y_label, best_idx):
+    fig, ax = plt.subplots(figsize=(10, 6), dpi=120)
+
+    # 重新计算时间轴
+    min_len = min(len(v) for v in data_dict.values())
+    time_axis = np.arange(min_len) * DT
+
+    all_global_values = []
+    local_max_val = 0
+    zoom_start = best_idx
+    zoom_end = best_idx + WINDOW_SIZE
+
+    # 1. 绘制全局背景 (使用 GLOBAL_STYLES)
+    for name in reversed(DISPLAY_ORDER):
+        if name not in data_dict: continue
+        full_y = data_dict[name][:min_len]
+        plot_y = full_y[START_FRAME:]
+        plot_x = time_axis[START_FRAME:min_len]
+
+        all_global_values.extend(plot_y)
+
+        if zoom_end <= len(full_y):
+            local_seg = full_y[zoom_start:zoom_end]
+            if len(local_seg) > 0:
+                local_max_val = max(local_max_val, np.max(local_seg))
+
+        s = GLOBAL_STYLES[name]
+        c = COLORS[name]
+        ax.plot(plot_x, plot_y, c=c, ls='-', lw=s['lw'], alpha=s['alpha'], zorder=s['zorder'], label=name)
+
+    # 2. 设置 Y 轴留白 (防重叠)
+    global_data_max = np.percentile(all_global_values, 99.5) if all_global_values else 1.0
+    ax.set_ylim(0, global_data_max * 2.5)
+
+    ax.set_title(title_text, fontsize=14, fontweight='bold')
+    ax.set_xlabel('Time (s)', fontsize=12)
+    ax.set_ylabel(y_label, fontsize=12)
+    ax.grid(True, linestyle='--', alpha=0.3)
+    ax.legend(loc='upper right', framealpha=0.95, shadow=True)
+
+    # 3. 绘制悬浮子图 (使用 LOCAL_STYLES)
+    axins = ax.inset_axes([0.05, 0.55, 0.45, 0.40])
+    local_x = np.arange(WINDOW_SIZE)  # 子图用相对帧数
+    local_vals_inset = []
+
+    for name in reversed(DISPLAY_ORDER):
+        if name not in data_dict: continue
+        local_y = data_dict[name][zoom_start:zoom_end]
+        local_vals_inset.extend(local_y)
+
+        s = LOCAL_STYLES[name]
+        c = COLORS[name]
+        axins.plot(local_x, local_y, c=c, ls=s['ls'], lw=1.0, marker=s['mk'], ms=s['ms'], markevery=MARK_EVERY,
+                   alpha=s['alpha'], zorder=s['zorder'])
+
+    axins.set_xlim(0, WINDOW_SIZE)
+    if local_vals_inset: axins.set_ylim(0, max(local_vals_inset) * 1.15)
+    axins.grid(True, linestyle=':', alpha=0.5)
+
+    # 4. 连接线与框
+    box_x0 = time_axis[zoom_start]
+    box_width = time_axis[zoom_end - 1] - box_x0
+    box_height = local_max_val
+
+    rect_patch = Rectangle((box_x0, 0), box_width, box_height, fill=False, edgecolor="k", linestyle="--", linewidth=0.8,
+                           alpha=0.6)
+    ax.add_patch(rect_patch)
+
+    rect_bbox = Bbox.from_bounds(box_x0, 0, box_width, box_height)
+    rect_transform = TransformedBbox(rect_bbox, ax.transData)
+
+    ax.add_patch(BboxConnector(axins.bbox, rect_transform, loc1=3, loc2=2, edgecolor="k", linestyle="--", linewidth=0.8,
+                               alpha=0.5))
+    ax.add_patch(BboxConnector(axins.bbox, rect_transform, loc1=4, loc2=1, edgecolor="k", linestyle="--", linewidth=0.8,
+                               alpha=0.5))
+
+    return fig
 
 def main():
     # ================= 2. 加载数据 =================
@@ -163,6 +244,11 @@ def main():
         print(f"    [锁定] 最佳片段起始帧: {best_idx}")
         print(f"    [指标] 分离度: {best_score:.5f}")
 
+    fig_comb_pos = draw_combined_figure(data_map_pos, 'Position Error', 'Position Error (m)', best_idx)
+    fig_comb_pos.show()
+
+    fig_comb_vel = draw_combined_figure(data_map_vel, 'Velocity Error', 'Velocity Error (m/s)', best_idx)
+    fig_comb_vel.show()
     # ================= 5. 绘图: 局部对比图 (Local) =================
     # 风格参考: compare_bo_adp_bayes.py
     fig_loc, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), dpi=120, sharex=True)

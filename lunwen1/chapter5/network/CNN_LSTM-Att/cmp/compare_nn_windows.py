@@ -9,20 +9,20 @@ FILES = {
     'Win 90': r'D:\AFS\lunwen\lunwen1\chapter5\network\MLP\nn_results_win90.npz'
 }
 
-# 风格配置：恢复了您喜欢的 [线型 + 标记 + 间隔] 样式
+# 风格配置
 STYLE_CONFIG = {
     'Win 90': {
         'c': '#006400', 'ls': '-', 'mk': '+', 'ms': 8, 'lw': 1.7, 'alpha': 0.95, 'zorder': 10,
         'label': 'Win 90 (Best)'
-    },  # 深绿, 实线, 加号
+    },
     'Win 180': {
         'c': '#1f77b4', 'ls': '--', 'mk': 'o', 'ms': 6, 'lw': 1.5, 'alpha': 0.75, 'zorder': 5,
         'label': 'Win 180'
-    },  # 蓝色, 虚线, 圆圈
+    },
     'Win 45': {
         'c': '#d62728', 'ls': ':', 'mk': '^', 'ms': 6, 'lw': 1.5, 'alpha': 0.75, 'zorder': 1,
         'label': 'Win 45'
-    }  # 红色, 点线, 三角
+    }
 }
 
 # 绘图顺序
@@ -31,7 +31,7 @@ DISPLAY_ORDER = ['Win 90', 'Win 180', 'Win 45']
 # 搜索参数
 WINDOW_SIZE = 100
 START_SEARCH = 90
-MARK_EVERY = 8  # 每隔 8 个点画一个标记，避免密密麻麻
+MARK_EVERY = 8
 
 
 # ===============================================
@@ -78,48 +78,46 @@ def auto_find_and_plot_best_segment():
         global_rmse_vel[name] = r_vel
         print(f"{name:<10} | Pos: {r_pos:.4f} | Vel: {r_vel:.4f}")
 
-    # ================= 4. 自动化搜索逻辑 =================
+    # ================= [核心修改] 替换为 combine 版的搜索逻辑 =================
     min_len = min([len(d) for d in data_map_pos.values()])
     END_SEARCH = min_len - WINDOW_SIZE
-    best_score = -1.0
-    best_idx = -1
-    best_metrics = {}
 
-    print(f"\n>>> 开始搜索 Win 90 < Win 180 < Win 45 ...")
+    best_score = -1.0
+    best_idx = START_SEARCH  # 默认起始位置
+
+    # 这里的 best_metrics 仅用于打印最后选中的区间 RMSE，不再用于搜索判断
+    # 搜索判断直接用临时计算的 rmses
+    final_best_metrics = {}
+
+    print(f"\n>>> 开始搜索 Win 90 < Win 180 < Win 45 (使用 Combine 简化逻辑)...")
 
     for i in range(START_SEARCH, END_SEARCH):
-        segs = {k: v[i: i + WINDOW_SIZE] for k, v in data_map_pos.items()}
-        rmses = {k: np.sqrt(np.mean(v ** 2)) for k, v in segs.items()}
+        # 计算当前窗口的 RMSE
+        rmses = {k: np.sqrt(np.mean(v[i: i + WINDOW_SIZE] ** 2)) for k, v in data_map_pos.items()}
 
-        # --- 修改开始：不仅仅比较 RMSE，而是比较每个点 ---
+        if ('Win 90' in rmses and 'Win 180' in rmses and 'Win 45' in rmses):
+            # 核心判断: 90 (Best) < 180 < 45 (Worst)
+            if (rmses['Win 90'] < rmses['Win 180'] < rmses['Win 45']):
 
-        s90 = segs['Win 90']
-        s180 = segs['Win 180']
-        s45 = segs['Win 45']
+                # 计算间距
+                gap1 = rmses['Win 180'] - rmses['Win 90']
+                gap2 = rmses['Win 45'] - rmses['Win 180']
 
-        # 1. 统计有多少个点严格满足“分层” (90 < 180 < 45)
-        # 满分是 100 (即 WINDOW_SIZE)，我们希望这个数越大越好
-        strict_count = np.sum((s90 < s180) & (s180 < s45))
+                # 取最小间隔作为得分 (Combine 版逻辑)
+                score = min(gap1, gap2)
 
-        # 2. 计算间距 (作为次要参考，分得越开越好)
-        gap_score = (rmses['Win 180'] - rmses['Win 90']) + (rmses['Win 45'] - rmses['Win 180'])
+                if score > best_score:
+                    best_score = score
+                    best_idx = i
+                    final_best_metrics = rmses
 
-        # 3. 综合打分：点数权重给极大 (1000)，保证只要有不交叉的片段，绝对优先选中
-        score = (strict_count * 1000) + gap_score
-
-        if score > best_score:
-            best_score = score
-            best_idx = i
-            best_metrics = rmses
-
-    if best_idx == -1:
-        print("[失败] 未找到满足条件的片段。")
-        return
+    if best_score == -1.0:
+        print("[警告] 未找到完全满足 Win 90 < 180 < 45 的区间，使用默认起始帧。")
 
     print(f"\n>>> 找到最佳片段! 起始帧: {best_idx}")
-    print(f"    分离度: {best_score:.5f}")
+    print(f"    分离度得分: {best_score:.5f}")
 
-    # ================= 5. 绘图：带标记的曲线图 (恢复您喜欢的样式) =================
+    # ================= 5. 绘图：带标记的曲线图 =================
     x_axis = np.arange(WINDOW_SIZE)
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), dpi=120, sharex=True)
 
@@ -131,14 +129,13 @@ def auto_find_and_plot_best_segment():
             segment = data_source[name][best_idx: best_idx + WINDOW_SIZE]
             s = STYLE_CONFIG[name]
 
-            # 这里使用了您喜欢的 markevery, linestyle, marker 参数
             ax.plot(x_axis, segment,
                     color=s['c'],
-                    linestyle=s['ls'],  # 线型
+                    linestyle=s['ls'],
                     linewidth=s['lw'],
-                    marker=s['mk'],  # 标记形状
-                    markersize=s['ms'],  # 标记大小
-                    markevery=MARK_EVERY,  # 标记间隔
+                    marker=s['mk'],
+                    markersize=s['ms'],
+                    markevery=MARK_EVERY,
                     alpha=s['alpha'],
                     zorder=s['zorder'],
                     label=s['label'])
@@ -149,8 +146,10 @@ def auto_find_and_plot_best_segment():
         ax.legend(loc='upper right', framealpha=0.95, shadow=True)
 
         # Y轴动态范围
-        current_max = max([np.max(data_source[n][best_idx: best_idx + WINDOW_SIZE]) for n in DISPLAY_ORDER])
-        ax.set_ylim(0, current_max * 1.3)
+        vals = [data_source[n][best_idx: best_idx + WINDOW_SIZE] for n in DISPLAY_ORDER if n in data_source]
+        if vals:
+            current_max = max([np.max(v) for v in vals])
+            ax.set_ylim(0, current_max * 1.3)
 
     plot_lines_with_style(ax1, data_map_pos, 'Position Error Comparison', 'Position Error (m)')
     plot_lines_with_style(ax2, data_map_vel, 'Velocity Error Comparison', 'Velocity Error (m/s)')

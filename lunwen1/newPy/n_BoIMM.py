@@ -2,6 +2,10 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from matplotlib.patches import Rectangle
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes, BboxConnector
+from matplotlib.transforms import Bbox, TransformedBbox
+
 from lunwen1.chapter5.bayes_imm.imm_lib_enhanced import IMMFilterEnhanced
 import lunwen1.chapter5.network.paper_plotting as pp
 # ==========================================
@@ -10,6 +14,102 @@ import lunwen1.chapter5.network.paper_plotting as pp
 CSV_FILE_PATH = r'D:\AFS\lunwen\dataSet\test_data\f16_super_maneuver_a.csv'
 DT = 1 / 30  # 30Hz 采样率
 MEAS_NOISE_STD = 15 # 观测噪声标准差 (米)
+
+# ==========================================
+# [新增] 样式配置 (用于 Combine Plot)
+# ==========================================
+STYLE_GLOBAL = {
+    'Bo-IMM': {'c': [0, 0.85, 0], 'lw': 1.8, 'alpha': 0.95, 'zorder': 10, 'label': 'Bo-IMM'},
+    '0.98-IMM': {'c': 'orange', 'lw': 1.2, 'alpha': 0.85, 'zorder': 8, 'label': '0.98-IMM'},
+    '0.6-IMM': {'c': 'm', 'lw': 1.0, 'alpha': 0.70, 'zorder': 6, 'label': '0.6-IMM'},
+    '0.8-IMM': {'c': 'b', 'lw': 1.0, 'alpha': 0.60, 'zorder': 4, 'label': '0.8-IMM'}
+}
+
+STYLE_LOCAL = {
+    'Bo-IMM': {'mk': '*', 'ms': 9, 'ls': '-', 'lw': 1.2, 'alpha': 1.0},
+    '0.98-IMM': {'mk': '^', 'ms': 7, 'ls': '-.', 'lw': 1.2, 'alpha': 0.9},
+    '0.6-IMM': {'mk': 's', 'ms': 6, 'ls': '--', 'lw': 1.2, 'alpha': 0.8},
+    '0.8-IMM': {'mk': 'o', 'ms': 5, 'ls': ':', 'lw': 1.2, 'alpha': 0.7}
+}
+
+DISPLAY_ORDER = ['0.8-IMM', '0.6-IMM', '0.98-IMM', 'Bo-IMM']
+MARK_EVERY = 5
+
+
+# ==========================================
+# [新增] Combine Plot 绘制函数
+# ==========================================
+def draw_combined_figure(data_dict, title_text, y_label, best_idx, window_size):
+    fig, ax = plt.subplots(figsize=(10, 6), dpi=120)
+
+    min_len = min(len(v) for v in data_dict.values())
+    time_axis = np.arange(min_len) * DT
+
+    all_global_values = []
+    local_max_val = 0
+    zoom_start = best_idx
+    zoom_end = best_idx + window_size
+
+    # 1. 绘制全局背景
+    for name in DISPLAY_ORDER:
+        if name not in data_dict: continue
+        full_y = data_dict[name]
+        plot_y = full_y[80:]  # 跳过初始化
+        plot_x = time_axis[80:len(full_y)]
+        all_global_values.extend(plot_y)
+
+        if zoom_end <= len(full_y):
+            local_seg = full_y[zoom_start:zoom_end]
+            if len(local_seg) > 0:
+                local_max_val = max(local_max_val, np.max(local_seg))
+
+        s = STYLE_GLOBAL[name]
+        ax.plot(plot_x, plot_y, c=s['c'], ls='-', lw=s['lw'], alpha=s['alpha'], zorder=s['zorder'], label=s['label'])
+
+    # 2. 设置 Y 轴
+    global_data_max = np.percentile(all_global_values, 99.5) if all_global_values else 1.0
+    ax.set_ylim(0, global_data_max * 2.5)
+    ax.set_title(title_text, fontsize=14, fontweight='bold')
+    ax.set_xlabel('Time (s)', fontsize=12)
+    ax.set_ylabel(y_label, fontsize=12)
+    ax.grid(True, linestyle='--', alpha=0.3)
+    ax.legend(loc='upper right', framealpha=0.95, shadow=True)
+
+    # 3. 绘制悬浮子图
+    axins = ax.inset_axes([0.05, 0.55, 0.45, 0.40])
+    local_x = np.arange(window_size)
+    local_vals_inset = []
+
+    for name in DISPLAY_ORDER:
+        if name not in data_dict: continue
+        local_y = data_dict[name][zoom_start:zoom_end]
+        local_vals_inset.extend(local_y)
+        s_glob = STYLE_GLOBAL[name]
+        s_loc = STYLE_LOCAL[name]
+        axins.plot(local_x, local_y, c=s_glob['c'], ls=s_loc['ls'], lw=s_loc['lw'], marker=s_loc['mk'], ms=s_loc['ms'],
+                   markevery=MARK_EVERY, alpha=s_loc['alpha'], zorder=s_glob['zorder'])
+
+    axins.set_xlim(0, window_size)
+    if local_vals_inset: axins.set_ylim(0, max(local_vals_inset) * 1.15)
+    axins.grid(True, linestyle=':', alpha=0.5)
+    axins.set_xlabel('Step (k)', fontsize=10)
+
+    # 4. 连接线
+    box_x0 = time_axis[zoom_start]
+    box_width = time_axis[zoom_end - 1] - box_x0
+    box_height = local_max_val
+    rect_patch = Rectangle((box_x0, 0), box_width, box_height, fill=False, edgecolor="k", linestyle="--", linewidth=0.8,
+                           alpha=0.6)
+    ax.add_patch(rect_patch)
+    rect_bbox = Bbox.from_bounds(box_x0, 0, box_width, box_height)
+    rect_transform = TransformedBbox(rect_bbox, ax.transData)
+    ax.add_patch(BboxConnector(axins.bbox, rect_transform, loc1=3, loc2=2, edgecolor="k", linestyle="--", linewidth=0.8,
+                               alpha=0.5))
+    ax.add_patch(BboxConnector(axins.bbox, rect_transform, loc1=4, loc2=1, edgecolor="k", linestyle="--", linewidth=0.8,
+                               alpha=0.5))
+
+    return fig
+
 
 def load_csv_data(filepath):
     """读取 CSV 并转换为 (9, N) 的状态矩阵"""
@@ -428,6 +528,36 @@ def main():
     else:
         print(f"  [成功] 找到最佳展示窗口: Frame {best_win_idx} - {best_win_idx + ZOOM_WIN_SIZE}")
 
+        # ==========================================
+        # [新增] 绘制 Combine Plot (位置 & 速度)
+        # ==========================================
+
+        # 1. 准备位置数据
+        data_pos = {
+            'Bo-IMM': dist_err_bo,
+            '0.98-IMM': dist_err_098,
+            '0.6-IMM': dist_err_06,
+            '0.8-IMM': dist_err_08
+        }
+
+        # 2. 准备速度数据
+        data_vel = {
+            'Bo-IMM': vel_err_bo,
+            '0.98-IMM': vel_err_098,
+            '0.6-IMM': vel_err_06,
+            '0.8-IMM': vel_err_08
+        }
+
+        print("\n>>> 生成 Combined Plot (Pos)...")
+        fig_comb_pos = draw_combined_figure(data_pos, 'Position Error', 'Position Error (m)', best_win_idx,
+                                            ZOOM_WIN_SIZE)
+        fig_comb_pos.show()
+
+        print(">>> 生成 Combined Plot (Vel)...")
+        fig_comb_vel = draw_combined_figure(data_vel, 'Velocity Error', 'Velocity Error (m/s)', best_win_idx,
+                                            ZOOM_WIN_SIZE)
+        fig_comb_vel.show()
+
     # 3. 准备绘图数据
     slice_idx = slice(best_win_idx, best_win_idx + ZOOM_WIN_SIZE)
     x_local = np.arange(ZOOM_WIN_SIZE)  # 相对时间轴
@@ -455,13 +585,13 @@ def main():
     }
 
     # 4. 绘制 3x1 子图
-    fig_zoom, axes_zoom = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
-    fig_zoom.suptitle(f'Local Detail Comparison (Frames {best_win_idx}-{best_win_idx + ZOOM_WIN_SIZE})', fontsize=16)
 
-    metric_names = ['Position Error (m)', 'Velocity Error (m/s)', 'Acceleration Error (m/s^2)']
+    # metric_names = ['Position Error (m)', 'Velocity Error (m/s)', 'Acceleration Error (m/s^2)']
+    metric_names = ['Position Error (m)', 'Velocity Error (m/s)']
 
     for i, metric in enumerate(metric_names):
-        ax = axes_zoom[i]
+        plt.figure(figsize=(10, 6))
+        ax = plt.gca()
         data_group = plot_data_map[metric]
 
         # 按照特定顺序绘图 (反向遍历以确保 Best 在最上层)
@@ -485,12 +615,12 @@ def main():
         ax.set_ylabel(metric, fontsize=11, fontweight='bold')
         ax.grid(True, linestyle='--', alpha=0.4)
         ax.legend(loc='upper right', ncol=2, fontsize=9, framealpha=0.9)
+        ax.set_xlabel('Step (k)', fontsize=12)  # 每一张图都加上X轴标签
 
         # 简单的 Y 轴动态缩放
         all_vals = np.concatenate(list(data_group.values()))
         ax.set_ylim(0, np.max(all_vals) * 1.25)
 
-    axes_zoom[-1].set_xlabel(f'Time Step (k)', fontsize=12)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
 
     plt.show()

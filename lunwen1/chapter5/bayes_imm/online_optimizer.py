@@ -103,10 +103,10 @@ class OnlineBoOptimizer:
         train_x = [center, anchor]
 
         # 随机采样补充 (在局部搜索范围内采样)
-        max_sample_attempts = 750
+        max_sample_attempts = 1000
         valid_count = 0
         for _ in range(max_sample_attempts):
-            if valid_count >= 150: break
+            if valid_count >= 200: break
             rand_pt = torch.rand(6, dtype=dtype, device=device) * (ub - lb) + lb
 
             # 简单的行和约束检查

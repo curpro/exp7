@@ -1,0 +1,212 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
+# ================= 配置 =================
+FILES = {
+    'OPT 10': r'D:\AFS\lunwen\lunwen1\chapter5\bayes_imm\result\Opt__10\r_300_20\imm_results_90.npz',
+    'OPT 40': r'D:\AFS\lunwen\lunwen1\chapter5\bayes_imm\result\Opt__40\r_300_20\imm_results_90.npz',
+    'OPT 20': r'D:\AFS\lunwen\lunwen1\chapter5\bayes_imm\result\Win_90\r_300_20\imm_results_90.npz'
+}
+
+DT = 1 / 30
+UNIFIED_START_FRAME = 90  # 统一跳过前90帧
+
+
+# ======================================
+
+def load_and_compare_nn():
+    results = {}
+    time_axis = None
+
+    print(f"=== 开始读取 NN 对比数据 (统一跳过前 {UNIFIED_START_FRAME} 帧) ===")
+
+    for label, filename in FILES.items():
+        if not os.path.exists(filename):
+            print(f"[警告] 找不到文件: {filename}")
+            continue
+
+        try:
+            data = np.load(filename)
+
+            # --- 核心修改：兼容多种键名 (参考 windows_global) ---
+            if 'err_online_pos' in data:
+                # 针对 Win_90 等生成的文件
+                err_pos = data['err_online_pos']
+                err_vel = data['err_online_vel'] if 'err_online_vel' in data else np.zeros_like(err_pos)
+            elif 'err_nn_pos' in data:
+                # 针对部分 Opt NN 结果文件
+                err_pos = data['err_nn_pos']
+                err_vel = data['err_nn_vel'] if 'err_nn_vel' in data else np.zeros_like(err_pos)
+            else:
+                # 针对标准基准文件
+                err_pos = data['err_pos']
+                err_vel = data['err_vel']
+            # ------------------------------------------------
+
+            t = data['t']
+
+            if time_axis is None:
+                time_axis = t
+
+            safe_start = min(UNIFIED_START_FRAME, len(err_pos) - 1)
+
+            rmse_pos = np.sqrt(np.mean(err_pos[safe_start:] ** 2))
+            rmse_vel = np.sqrt(np.mean(err_vel[safe_start:] ** 2))
+            var_pos = np.var(err_pos[safe_start:])
+
+            results[label] = {
+                'rmse_pos': rmse_pos,
+                'rmse_vel': rmse_vel,
+                'var_pos': var_pos,
+                'err_pos_seq': err_pos,
+                'err_vel_seq': err_vel
+            }
+            print(f"加载: {label:<12} | Pos RMSE: {rmse_pos:.4f}")
+
+        except Exception as e:
+            print(f"[错误] 读取 {filename} 失败: {e}")
+
+    if not results:
+        print("未加载到任何数据，请检查路径。")
+        return
+
+    # ================= 打印表格 =================
+    print("\n" + "=" * 80)
+    print(f"{'Opt Interval':<15} | {'Pos RMSE (m)':<15} | {'Vel RMSE (m/s)':<15} | {'Pos Var':<15}")
+    print("-" * 80)
+
+    # 排序：OPT 20 (最好) -> OPT 10 (其次) -> OPT 40 (最差)
+    sorted_keys = ['OPT 20', 'OPT 10', 'OPT 40']
+    sorted_keys = [k for k in sorted_keys if k in results]
+
+    vals_pos = []
+    vals_vel = []
+    labels = []
+
+    for key in sorted_keys:
+        r = results[key]
+        print(f"{key:<15} | {r['rmse_pos']:<15.4f} | {r['rmse_vel']:<15.4f} | {r['var_pos']:<15.4f}")
+        vals_pos.append(r['rmse_pos'])
+        vals_vel.append(r['rmse_vel'])
+        labels.append(key)
+    print("=" * 80 + "\n")
+
+    # === [配置] 颜色与样式 ===
+    color_map = {
+        'OPT 20': '#006400',  # 绿
+        'OPT 10': '#1f77b4',  # 蓝
+        'OPT 40': '#d62728'  # 红
+    }
+
+    # 样式层级：严格区分粗细
+    style_map = {
+        'OPT 20': {'lw': 1.0, 'alpha': 0.80, 'zorder': 10},
+        'OPT 10': {'lw': 1.5, 'alpha': 0.80, 'zorder': 5},
+        'OPT 40': {'lw': 1.0, 'alpha': 0.80, 'zorder': 1}
+    }
+
+    # ================= 绘图 1: 柱状图 =================
+    fig1, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+    x = np.arange(len(labels))
+    width = 0.5
+    bar_colors = [color_map[label] for label in labels]
+
+    # 左图：位置
+    bars1 = ax1.bar(x, vals_pos, width, color=bar_colors, alpha=0.85)
+    ax1.set_title(f'Position RMSE Comparison', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('RMSE (m)')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(labels)
+    ax1.grid(axis='y', linestyle='--', alpha=0.4)
+
+    # 柱状图保留动态缩放
+    min_p, max_p = min(vals_pos), max(vals_pos)
+    margin_p = (max_p - min_p) * 0.8 if max_p != min_p else 0.1
+    ax1.set_ylim(max(0, min_p - margin_p), max_p + margin_p)
+
+    # 右图：速度
+    bars2 = ax2.bar(x, vals_vel, width, color=bar_colors, alpha=0.85)
+    ax2.set_title(f'Velocity RMSE Comparison', fontsize=12, fontweight='bold')
+    ax2.set_ylabel('RMSE (m/s)')
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(labels)
+    ax2.grid(axis='y', linestyle='--', alpha=0.4)
+
+    min_v, max_v = min(vals_vel), max(vals_vel)
+    margin_v = (max_v - min_v) * 0.8 if max_v != min_v else 0.1
+    ax2.set_ylim(max(0, min_v - margin_v), max_v + margin_v)
+
+    def autolabel(rects, ax):
+        for rect in rects:
+            height = rect.get_height()
+            ax.annotate(f'{height:.4f}',
+                        xy=(rect.get_x() + rect.get_width() / 2, height),
+                        xytext=(0, 3), textcoords="offset points",
+                        ha='center', va='bottom', fontweight='bold')
+
+    autolabel(bars1, ax1)
+    autolabel(bars2, ax2)
+    fig1.tight_layout()
+
+    # ================= 绘图 2: 原始曲线图 (严格按照Windows要求) =================
+    plt.figure(figsize=(12, 10))
+
+    # --- 上图：位置误差 ---
+    plt.subplot(2, 1, 1)
+
+    for key in sorted_keys:
+        err = results[key]['err_pos_seq']
+        rmse = results[key]['rmse_pos']
+
+        plot_data = err[UNIFIED_START_FRAME:]
+
+        style = style_map.get(key, {'lw': 1, 'alpha': 0.7, 'zorder': 1})
+        line_color = color_map.get(key, 'k')
+
+        plt.plot(time_axis[UNIFIED_START_FRAME:], plot_data,
+                 label=f'{key} (RMSE={rmse:.2f}m)',
+                 color=line_color,
+                 linewidth=style['lw'],
+                 alpha=style['alpha'],
+                 zorder=style['zorder'])
+        # 默认使用实线，不覆盖 linestyle
+
+    # [严格执行] 不设置 Y 轴限制，自动适应所有数据
+    plt.title(f'Position Error')
+    plt.ylabel('Position Error (m)')
+    plt.legend(loc='upper right', framealpha=0.9, shadow=True)
+    plt.grid(True, linestyle='--', alpha=0.4)
+
+    # --- 下图：速度误差 ---
+    plt.subplot(2, 1, 2)
+
+    for key in sorted_keys:
+        err = results[key]['err_vel_seq']
+        rmse = results[key]['rmse_vel']
+
+        plot_data = err[UNIFIED_START_FRAME:]
+
+        style = style_map.get(key, {'lw': 1, 'alpha': 0.7, 'zorder': 1})
+        line_color = color_map.get(key, 'k')
+
+        plt.plot(time_axis[UNIFIED_START_FRAME:], plot_data,
+                 label=f'{key} (RMSE={rmse:.2f}m/s)',
+                 color=line_color,
+                 linewidth=style['lw'],
+                 alpha=style['alpha'],
+                 zorder=style['zorder'])
+
+    # [严格执行] 不设置 Y 轴限制
+    plt.title(f'Velocity Error')
+    plt.ylabel('Velocity Error (m/s)')
+    plt.xlabel('Time (s)')
+    plt.legend(loc='upper right', framealpha=0.9, shadow=True)
+    plt.grid(True, linestyle='--', alpha=0.4)
+
+    plt.tight_layout()
+    plt.show()
+
+
+if __name__ == "__main__":
+    load_and_compare_nn()

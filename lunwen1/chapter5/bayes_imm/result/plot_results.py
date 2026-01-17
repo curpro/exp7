@@ -9,7 +9,7 @@ DT = 1 / 30
 # ======================================
 
 def analyze_and_plot():
-    file_path = r'D:\AFS\lunwen\lunwen1\chapter5\bayes_imm\result\Win_90\r_300_20\traj2\imm_results_90.npz'
+    file_path = r'D:\AFS\lunwen\lunwen1\chapter5\bayes_imm\result\Opt__10\r_300_20\imm_results_90.npz'
 
     print(f"=== 正在读取本地数据: {file_path} ===")
     try:

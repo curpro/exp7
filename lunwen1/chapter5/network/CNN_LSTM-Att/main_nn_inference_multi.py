@@ -297,7 +297,7 @@ def main_multi_scenario():
     vals_fix_p = df_res["RMSE_Pos_Fixed"]
     vals_adp_p = df_res["RMSE_Pos_Adaptive"]
 
-    rects1 = ax1.bar(x - width / 2, vals_fix_p, width, label='Fixed IMM', color='b', alpha=0.6)
+    rects1 = ax1.bar(x - width / 2, vals_fix_p, width, label='BO-IMM', color='b', alpha=0.6)
     rects2 = ax1.bar(x + width / 2, vals_adp_p, width, label='NN-IMM', color='r', alpha=0.7)
 
     ax1.set_xlabel('Scenarios', fontsize=12)
@@ -330,7 +330,7 @@ def main_multi_scenario():
     vals_fix_v = df_res["RMSE_Vel_Fixed"]
     vals_adp_v = df_res["RMSE_Vel_Adaptive"]
 
-    rects3 = ax2.bar(x - width / 2, vals_fix_v, width, label='Fixed IMM', color='b', alpha=0.6)
+    rects3 = ax2.bar(x - width / 2, vals_fix_v, width, label='BO IMM', color='b', alpha=0.6)
     rects4 = ax2.bar(x + width / 2, vals_adp_v, width, label='NN-IMM', color='r', alpha=0.7)
 
     ax2.set_xlabel('Scenarios', fontsize=12)

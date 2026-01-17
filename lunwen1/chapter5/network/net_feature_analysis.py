@@ -23,7 +23,7 @@ BATCH_SIZE = 128
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 FEATURE_NAMES = [
-    'Rel Pos X', 'Rel Pos Y', 'Rel Pos Z',
+    'Pos X', 'Pos Y', 'Pos Z',
     'Vel X', 'Vel Y', 'Vel Z',
     'Acc X', 'Acc Y', 'Acc Z'
 ]
@@ -159,13 +159,31 @@ def analyze_saliency_map(model, X, Y):
     # (90, 9) -> 时间步 x 特征
     saliency = np.mean(np.abs(grads), axis=0)
 
+    # saliency = saliency[:75, :]
+
     # 绘图
-    plt.figure(figsize=(12, 6))
-    # 转置一下：行是特征，列是时间
-    sns.heatmap(saliency.T, cmap='viridis', xticklabels=10, yticklabels=FEATURE_NAMES)
-    plt.xlabel('Time Step (0-90)')
-    plt.ylabel('Features')
-    plt.title('Saliency Map: Which time steps matter most?\n(Brighter = Higher Gradient Impact)')
+    plt.figure(figsize=(12, 6))  # 保持原本的宽图（适合时间序列）
+
+    # 1. 绘制热力图
+    # 保持使用 saliency.T (特征在行/Y轴，时间在列/X轴)
+    ax = sns.heatmap(saliency.T, cmap='viridis',
+                     xticklabels=10,
+                     yticklabels=FEATURE_NAMES,
+                     cbar_kws={'label': 'Gradient Magnitude'})
+
+    # === 关键修改 1: 强制 Y 轴文字水平显示 (横过来) ===
+    # rotation=0 表示文字水平放置
+    plt.yticks(rotation=0)
+
+    # === 关键修改 2: 将 Colorbar 标签移到左侧 ===
+    cbar = ax.collections[0].colorbar
+    cbar.ax.yaxis.set_label_position('left')
+
+    # 坐标轴标签
+    plt.xlabel('Time Step (k)')
+    plt.ylabel('Input Features')
+    plt.title('Spatiotemporal Saliency Map', fontsize=14)
+
     plt.tight_layout()
     plt.show()
 

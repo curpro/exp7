@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import os
 
 # 确保路径正确
-file_path = './npz_pos/training_data_part0.npz'
+file_path = './npz/training_data_part0.npz'
 
 if not os.path.exists(file_path):
     print(f"错误：找不到文件 {file_path}")

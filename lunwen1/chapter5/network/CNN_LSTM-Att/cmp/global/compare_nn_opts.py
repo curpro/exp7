@@ -126,7 +126,7 @@ def load_and_compare_nn():
     def autolabel(rects, ax):
         for rect in rects:
             height = rect.get_height()
-            ax.annotate(f'{height:.3f}',
+            ax.annotate(f'{height:.4f}',
                         xy=(rect.get_x() + rect.get_width() / 2, height),
                         xytext=(0, 3), textcoords="offset points",
                         ha='center', va='bottom', fontweight='bold')

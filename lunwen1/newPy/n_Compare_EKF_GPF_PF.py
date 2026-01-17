@@ -1,6 +1,9 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes, BboxConnector
+from matplotlib.transforms import Bbox, TransformedBbox
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel
 import warnings
@@ -25,6 +28,29 @@ except ImportError:
 CSV_FILE_PATH = r'D:\AFS\lunwen\dataSet\test_data\f16_super_maneuver_a.csv'
 DT = 1 / 30  # 30Hz 采样率
 MEAS_NOISE_STD = 15  # 观测噪声标准差 (米)
+
+
+# ==========================================
+# [新增] 样式配置 (用于 Combine Plot)
+# ==========================================
+# Global Style: 细实线，高透明度
+STYLE_GLOBAL = {
+    'Bo-IMM': {'c': [0, 0.85, 0], 'lw': 1.8, 'alpha': 0.95, 'zorder': 10, 'label': 'Bo-IMM'},
+    'EKF':    {'c': 'm', 'lw': 1.2, 'alpha': 0.85, 'zorder': 8,  'label': 'EKF'},
+    'PF':     {'c': 'orange',  'lw': 1.0, 'alpha': 0.70, 'zorder': 6,  'label': 'PF'},
+    'GPF':    {'c': 'b', 'lw': 1.0, 'alpha': 0.60, 'zorder': 4,  'label': 'GPF'}
+}
+
+# Local Style: 带 Marker，不透明
+STYLE_LOCAL = {
+    'Bo-IMM': {'mk': '*', 'ms': 9, 'ls': '-',  'lw': 1.2, 'alpha': 1.0},
+    'EKF':    {'mk': '^', 'ms': 7, 'ls': '-.', 'lw': 1.2, 'alpha': 0.9},
+    'PF':     {'mk': 's', 'ms': 6, 'ls': '--', 'lw': 1.2, 'alpha': 0.8},
+    'GPF':    {'mk': 'o', 'ms': 5, 'ls': ':',  'lw': 1.2, 'alpha': 0.7}
+}
+
+DISPLAY_ORDER = ['GPF', 'PF', 'EKF', 'Bo-IMM']
+MARK_EVERY = 5 # 子图标记间隔
 
 
 # ==========================================
@@ -260,6 +286,100 @@ def calculate_derivatives_for_gp(pos_data, dt):
     state_9d[[2, 5, 8], :] = acc  # 加速度 (二次差分+平滑)
 
     return state_9d
+
+
+# ==========================================
+# [新增] Combine Plot 绘制函数
+# ==========================================
+def draw_combined_figure(data_dict, title_text, y_label, best_idx, window_size):
+    fig, ax = plt.subplots(figsize=(10, 6), dpi=120)
+
+    # 准备数据
+    min_len = min(len(v) for v in data_dict.values())
+    time_axis = np.arange(min_len) * DT
+
+    all_global_values = []
+    local_max_val = 0
+    zoom_start = best_idx
+    zoom_end = best_idx + window_size
+
+    # 1. 绘制全局背景 (Global Style)
+    # 跳过前80帧初始化
+    PLOT_START = 80
+
+    for name in DISPLAY_ORDER:
+        if name not in data_dict: continue
+
+        full_y = data_dict[name]
+        plot_y = full_y[PLOT_START:]
+        plot_x = time_axis[PLOT_START:len(full_y)]
+
+        all_global_values.extend(plot_y)
+
+        # 记录局部最大值 (用于防撞)
+        if zoom_end <= len(full_y):
+            local_seg = full_y[zoom_start:zoom_end]
+            if len(local_seg) > 0:
+                local_max_val = max(local_max_val, np.max(local_seg))
+
+        s = STYLE_GLOBAL[name]
+        ax.plot(plot_x, plot_y,
+                c=s['c'], ls='-', lw=s['lw'],
+                alpha=s['alpha'], zorder=s['zorder'], label=s['label'])
+
+    # 2. 设置 Y 轴留白
+    global_data_max = np.percentile(all_global_values, 99.5) if all_global_values else 1.0
+    ax.set_ylim(0, global_data_max * 2.5)
+
+    ax.set_title(title_text, fontsize=14, fontweight='bold')
+    ax.set_xlabel('Time (s)', fontsize=12)
+    ax.set_ylabel(y_label, fontsize=12)
+    ax.grid(True, linestyle='--', alpha=0.3)
+    ax.legend(loc='upper right', framealpha=0.95, shadow=True)
+
+    # 3. 绘制悬浮子图 (Local Style)
+    axins = ax.inset_axes([0.05, 0.55, 0.45, 0.40])
+    local_x = np.arange(window_size)
+    local_vals_inset = []
+
+    for name in DISPLAY_ORDER:
+        if name not in data_dict: continue
+
+        local_y = data_dict[name][zoom_start:zoom_end]
+        local_vals_inset.extend(local_y)
+
+        s_glob = STYLE_GLOBAL[name]
+        s_loc = STYLE_LOCAL[name]
+
+        axins.plot(local_x, local_y,
+                   c=s_glob['c'], ls=s_loc['ls'], lw=s_loc['lw'],
+                   marker=s_loc['mk'], ms=s_loc['ms'], markevery=MARK_EVERY,
+                   alpha=s_loc['alpha'], zorder=s_glob['zorder'])
+
+    axins.set_xlim(0, window_size)
+    if local_vals_inset:
+        axins.set_ylim(0, max(local_vals_inset) * 1.15)
+    axins.grid(True, linestyle=':', alpha=0.5)
+    axins.set_xlabel('Step (k)', fontsize=10)
+
+    # 4. 连接线与框
+    box_x0 = time_axis[zoom_start]
+    box_width = time_axis[zoom_end - 1] - box_x0
+    box_height = local_max_val
+
+    rect_patch = Rectangle((box_x0, 0), box_width, box_height,
+                           fill=False, edgecolor="k", linestyle="--", linewidth=0.8, alpha=0.6)
+    ax.add_patch(rect_patch)
+
+    rect_bbox = Bbox.from_bounds(box_x0, 0, box_width, box_height)
+    rect_transform = TransformedBbox(rect_bbox, ax.transData)
+
+    ax.add_patch(BboxConnector(axins.bbox, rect_transform, loc1=3, loc2=2, edgecolor="k", linestyle="--", linewidth=0.8,
+                               alpha=0.5))
+    ax.add_patch(BboxConnector(axins.bbox, rect_transform, loc1=4, loc2=1, edgecolor="k", linestyle="--", linewidth=0.8,
+                               alpha=0.5))
+
+    return fig
 
 
 # ==========================================
@@ -512,12 +632,12 @@ def main():
     LOCAL_STYLES = {
         'Bo-IMM': {
             # 绿色, 实线, 星号 (Best) 
-            'c': '#00AA00', 'ls': '-', 'mk': '*', 'ms': 9, 'lw': 2.5, 'alpha': 1.0, 'zorder': 10,
+            'c': [0, 0.85, 0], 'ls': '-', 'mk': '*', 'ms': 9, 'lw': 2.5, 'alpha': 1.0, 'zorder': 10,
             'label': 'Bo-IMM'
         },
         'EKF': {
             # 红色, 点划线, 三角 (Second)
-            'c': '#d62728', 'ls': '-.', 'mk': '^', 'ms': 6, 'lw': 1.5, 'alpha': 0.9, 'zorder': 8,
+            'c': 'm', 'ls': '-.', 'mk': '^', 'ms': 6, 'lw': 1.5, 'alpha': 0.9, 'zorder': 8,
             'label': 'EKF'
         },
         'PF': {
@@ -527,7 +647,7 @@ def main():
         },
         'GPF': {
             # 蓝色, 点线, 圆圈 (Worst)
-            'c': '#1f77b4', 'ls': ':', 'mk': 'o', 'ms': 5, 'lw': 1.5, 'alpha': 0.7, 'zorder': 4,
+            'c': 'b', 'ls': ':', 'mk': 'o', 'ms': 5, 'lw': 1.5, 'alpha': 0.7, 'zorder': 4,
             'label': 'GPF'
         }
     }
@@ -599,6 +719,33 @@ def main():
         best_win_idx = search_end - 1
         print(f"  [失败] Bo-IMM 在所有窗口中均未表现出对 EKF 的显著优势。显示最后一段。")
 
+
+    # 1. 准备位置数据
+    data_pos = {
+        'Bo-IMM': dist_err_bo,
+        'EKF': dist_err_ekf,
+        'PF': dist_err_pf,
+        'GPF': dist_err_gp
+    }
+
+    # 2. 准备速度数据
+    data_vel = {
+        'Bo-IMM': vel_err_bo,
+        'EKF': vel_err_ekf,
+        'PF': vel_err_pf,
+        'GPF': vel_err_gp
+    }
+
+    print("\n>>> 生成 Combined Plot (Pos)...")
+    fig_comb_pos = draw_combined_figure(data_pos, 'Position Error', 'Position Error (m)', best_win_idx,
+                                        ZOOM_WIN_SIZE)
+    fig_comb_pos.show()
+
+    print(">>> 生成 Combined Plot (Vel)...")
+    fig_comb_vel = draw_combined_figure(data_vel, 'Velocity Error', 'Velocity Error (m/s)', best_win_idx,
+                                        ZOOM_WIN_SIZE)
+    fig_comb_vel.show()
+
     # 3. 准备绘图数据
     slice_idx = slice(best_win_idx, best_win_idx + ZOOM_WIN_SIZE)
     x_local = np.arange(ZOOM_WIN_SIZE)  # 相对时间轴
@@ -626,18 +773,18 @@ def main():
     }
 
     # 4. 绘制 3x1 子图
-    fig_zoom, axes_zoom = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
+    metric_names = ['Position Error (m)', 'Velocity Error (m/s)']
 
-    status_str = "(Strict Order)" if is_strict_match else "(Loose Order)"
-    fig_zoom.suptitle(f'Local Detail Comparison: Frames {best_win_idx}-{best_win_idx + ZOOM_WIN_SIZE} {status_str}',
-                      fontsize=14)
-
-    metric_names = ['Position Error (m)', 'Velocity Error (m/s)', 'Acceleration Error (m/s^2)']
-    # 绘制顺序：从最差到最好，这样最好的线会在最上层 (配合 zorder)
+    # 2. 绘图顺序 (确保最好的 Bo-IMM 在最上层)
     draw_order = ['GPF', 'PF', 'EKF', 'Bo-IMM']
 
-    for i, metric in enumerate(metric_names):
-        ax = axes_zoom[i]
+    status_str = "(Strict Order)" if is_strict_match else "(Loose Order)"
+
+    for metric in metric_names:
+        # --- 关键修改：每次循环新建一个 Figure，不要在外面调用 subplots ---
+        plt.figure(figsize=(10, 6))
+        ax = plt.gca()
+
         data_group = plot_data_map[metric]
 
         for model_name in draw_order:
@@ -653,21 +800,24 @@ def main():
                     alpha=style['alpha'],
                     zorder=style['zorder'],
                     label=style['label'],
-                    markevery=5)  # 每5个点画一个标记，避免拥挤
+                    markevery=5)
 
-        ax.set_ylabel(metric, fontsize=11, fontweight='bold')
+        # 设置标题和标签 (每个窗口独立设置)
+        ax.set_title(f'Local Detail: {metric}\nFrames {best_win_idx}-{best_win_idx + ZOOM_WIN_SIZE} {status_str}',
+                     fontsize=14)
+        ax.set_ylabel(metric, fontsize=12, fontweight='bold')
+        ax.set_xlabel('Step (k)', fontsize=12)  # 每一张图都加上X轴标签
+
         ax.grid(True, linestyle='--', alpha=0.4)
+        # 每一张图都显示图例
+        ax.legend(loc='upper right', ncol=4, fontsize=10, framealpha=0.9, shadow=True)
 
-        # 只在第一张图显示图例，避免遮挡
-        if i == 0:
-            ax.legend(loc='upper right', ncol=4, fontsize=9, framealpha=0.95)
-
-        # 动态 Y 轴缩放
+        # 调整 Y 轴范围
         all_vals = np.concatenate(list(data_group.values()))
-        ax.set_ylim(0, np.max(all_vals) * 1.3)
+        ax.set_ylim(0, np.max(all_vals) * 1.35)
 
-    axes_zoom[-1].set_xlabel(f'Time Step (k)', fontsize=12)
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
+        plt.tight_layout()
+
     plt.show()
 
 

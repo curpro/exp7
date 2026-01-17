@@ -7,7 +7,7 @@ from lunwen1.chapter5.bayes_imm.imm_lib_enhanced import IMMFilterEnhanced
 # ==========================================
 # 1. 配置参数
 # ==========================================
-CSV_FILE_PATH = r'../../../dataSet/test_data/f16_complex_data_spiral.csv'
+CSV_FILE_PATH = r'../../../dataSet/test_data/f16_super_maneuver_a.csv'
 DT = 1 / 30  # 30Hz 采样率
 MEAS_NOISE_STD = 15 # 观测噪声标准差 (米)
 
@@ -121,7 +121,7 @@ def main():
     imm_bo = IMMFilterEnhanced(create_trans_matrix(0.975), initial_state, initial_cov, r_cov=r_cov)
     imm_06 = IMMFilterEnhanced(create_trans_matrix(0.997), initial_state, initial_cov, r_cov=r_cov)
     imm_08 = IMMFilterEnhanced(create_trans_matrix(0.9999), initial_state, initial_cov, r_cov=r_cov)
-    imm_098 = IMMFilterEnhanced(create_trans_matrix(0.999999), initial_state, initial_cov, r_cov=r_cov)
+    imm_098 = IMMFilterEnhanced(create_trans_matrix(0.99999957), initial_state, initial_cov, r_cov=r_cov)
 
     # 5. 运行滤波
     print("正在运行 Bo-IMM ...")

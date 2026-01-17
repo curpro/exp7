@@ -139,7 +139,7 @@ def main():
 
     err_online_pos = np.sqrt(np.sum((est_online[[0, 3, 6]] - true_pos_raw) ** 2, axis=0))
     err_fixed_pos = np.sqrt(np.sum((est_fixed[[0, 3, 6]] - true_pos_raw) ** 2, axis=0))
-    start_plot = 80
+    start_plot = 90
     t = np.arange(num_steps) * DT
 
     true_vel = true_state_full[[1, 4, 7], :]
@@ -162,7 +162,7 @@ def main():
 
     # ================= [新增] 打印详细对比数据 =================
     # 使用与绘图相同的起始帧，跳过初始化的不稳定阶段
-    eval_start_idx = 80
+    eval_start_idx = 90
 
     # 1. 计算平均 RMSE
     rmse_pos_fix_val = np.sqrt(np.mean(err_fixed_pos[eval_start_idx:] ** 2))

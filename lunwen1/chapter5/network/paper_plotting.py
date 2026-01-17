@@ -155,7 +155,7 @@ def plot_computational_cost(nn_times, bo_times, bo_interval=20):
     ax2.plot(frames, nn_times[:n_updates], 'r-o', label='NN-IMM', markersize=4, linewidth=1.5)
     ax2.plot(frames, bo_times[:n_updates], 'b-s', label='bayesOnline', markersize=4, linewidth=1, alpha=0.6)
 
-    ax2.set_xlabel('Simulation Frame')
+    ax2.set_xlabel('Step(k)')
     ax2.set_ylabel('Processing Time (ms)')
     ax2.set_title('Real-time Processing Latency')
     ax2.legend()

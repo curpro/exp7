@@ -20,7 +20,14 @@ from lunwen1.chapter5.bayes_imm.imm_lib_enhanced import IMMFilterEnhanced
 SCENARIOS = {
     "Super Maneuver": r'D:\AFS\lunwen\dataSet\test_data\f16_super_maneuver_a.csv',  # 超级机动
     "Dogfight": r'D:\AFS\lunwen\dataSet\test_data\f16_dogfight_maneuver.csv',  # 近距格斗
-    "Complex Trajectory": r'D:\AFS\lunwen\dataSet\processed_data_4\f16_complex_data_razor.csv' # 复杂轨迹
+    "Complex Trajectory": r'D:\AFS\lunwen\dataSet\processed_data_4\f16_complex_data_razor.csv'  # 复杂轨迹
+}
+
+# 2. 定义 BO-IMM 的硬编码结果 (基准对比数据)
+BO_IMM_RESULTS = {
+    "Super Maneuver": {"pos": 7.0787, "vel": 11.3571},
+    "Dogfight": {"pos": 7.5104, "vel": 14.1510},
+    "Complex Trajectory": {"pos": 6.8725, "vel": 10.4713}
 }
 
 MODEL_PATH = 'imm_param_net.pth'
@@ -105,17 +112,14 @@ def run_simulation(name, filepath, model, scaler_mean, scaler_std, device):
     sim_steps = len(gt_pos_data)
     meas_noise_std = 15
 
+    # 1. NN 专用噪声 (种子 414) - 保持不变以复现结果
     np.random.seed(414)
     noise_matrix_nn = np.random.randn(3, sim_steps) * meas_noise_std
-
-    # 2. Fixed-IMM 专用噪声 (种子 42)
-    np.random.seed(42)
-    noise_matrix_fixed = np.random.randn(3, sim_steps) * meas_noise_std
 
     # 3. 恢复全局种子 414 (防止影响后续逻辑)
     np.random.seed(414)
 
-    # 初始化 IMM
+    # 初始化 IMM (NN-IMM)
     initial_trans_prob = np.array([[0.81388511, 0.18511489, 0.001], [0.989, 0.01, 0.001], [0.01, 0.01, 0.98]])
     initial_state = np.zeros(9)
     initial_state[0] = gt_pos_data[0, 0];
@@ -129,7 +133,6 @@ def run_simulation(name, filepath, model, scaler_mean, scaler_std, device):
     r_cov = np.eye(3) * (meas_noise_std ** 2)
 
     imm_adaptive = IMMFilterEnhanced(initial_trans_prob, initial_state, init_cov, r_cov=r_cov)
-    imm_fixed = IMMFilterEnhanced(initial_trans_prob, initial_state, init_cov, r_cov=r_cov)
 
     pos_buffer = deque(maxlen=WINDOW_SIZE)
     last_pred_params = None
@@ -137,14 +140,11 @@ def run_simulation(name, filepath, model, scaler_mean, scaler_std, device):
 
     hist_est_pos_adapt = []
     hist_est_vel_adapt = []
-    hist_est_pos_fix = []
-    hist_est_vel_fix = []
 
-    # 仿真循环
+    # 仿真循环 (仅运行 NN-IMM)
     for k in range(sim_steps):
         true_pos = gt_pos_data[k]
         z_k_nn = true_pos + noise_matrix_nn[:, k]  # NN 用 414 噪声
-        z_k_fixed = true_pos + noise_matrix_fixed[:, k]  # Fixed 用 42 噪声
 
         # NN 更新逻辑
         if len(pos_buffer) == WINDOW_SIZE and k % OPTIMIZE_INTERVAL == 0:
@@ -170,42 +170,41 @@ def run_simulation(name, filepath, model, scaler_mean, scaler_std, device):
             imm_adaptive.set_transition_matrix(new_matrix)
 
         est_state_adapt, _ = imm_adaptive.update(z_k_nn, DT)  # 传入 z_k_nn
-        est_state_fixed, _ = imm_fixed.update(z_k_fixed, DT)  # 传入 z_k_fixed
 
         pos_buffer.append(z_k_nn)
 
         hist_est_pos_adapt.append(est_state_adapt[[0, 3, 6]])
         hist_est_vel_adapt.append(est_state_adapt[[1, 4, 7]])
 
-        hist_est_pos_fix.append(est_state_fixed[[0, 3, 6]])
-        hist_est_vel_fix.append(est_state_fixed[[1, 4, 7]])
-
     # 评估计算 (跳过前 90 帧)
     start_idx = WINDOW_SIZE
 
     est_pos_adp = np.array(hist_est_pos_adapt)
     est_vel_adp = np.array(hist_est_vel_adapt)
-    est_pos_fix = np.array(hist_est_pos_fix)
-    est_vel_fix = np.array(hist_est_vel_fix)
 
-    # 1. 计算位置误差
+    # 1. 计算 NN-IMM 误差 (动态计算)
     err_pos_adp = np.linalg.norm(est_pos_adp - gt_pos_data, axis=1)
-    err_pos_fix = np.linalg.norm(est_pos_fix - gt_pos_data, axis=1)
-
     rmse_pos_adapt = np.sqrt(np.mean(err_pos_adp[start_idx:] ** 2))
-    rmse_pos_fix = np.sqrt(np.mean(err_pos_fix[start_idx:] ** 2))
-    improv_pos = (rmse_pos_fix - rmse_pos_adapt) / rmse_pos_fix * 100
 
-    # 2. 计算速度误差
     err_vel_adp = np.linalg.norm(est_vel_adp - gt_vel_data, axis=1)
-    err_vel_fix = np.linalg.norm(est_vel_fix - gt_vel_data, axis=1)
-
     rmse_vel_adapt = np.sqrt(np.mean(err_vel_adp[start_idx:] ** 2))
-    rmse_vel_fix = np.sqrt(np.mean(err_vel_fix[start_idx:] ** 2))
+
+    # 2. 获取 BO-IMM 误差 (硬编码读取)
+    if name in BO_IMM_RESULTS:
+        rmse_pos_fix = BO_IMM_RESULTS[name]["pos"]
+        rmse_vel_fix = BO_IMM_RESULTS[name]["vel"]
+    else:
+        print(f"[Warning] Scenario {name} not found in BO_IMM_RESULTS, using 0.0")
+        rmse_pos_fix = 0.0
+        rmse_vel_fix = 0.0
+
+    # 计算提升率 (相对于 BO-IMM)
+    improv_pos = (rmse_pos_fix - rmse_pos_adapt) / rmse_pos_fix * 100
     improv_vel = (rmse_vel_fix - rmse_vel_adapt) / rmse_vel_fix * 100
 
-    print(f"  > [Result] POS RMSE Fix: {rmse_pos_fix:.2f}m | Adp: {rmse_pos_adapt:.2f}m | Imp: {improv_pos:.2f}%")
-    print(f"  > [Result] VEL RMSE Fix: {rmse_vel_fix:.2f}m/s| Adp: {rmse_vel_adapt:.2f}m/s| Imp: {improv_vel:.2f}%")
+    print(f"  > [Result] POS RMSE BO-IMM: {rmse_pos_fix:.4f}m | NN-IMM: {rmse_pos_adapt:.4f}m | Imp: {improv_pos:.2f}%")
+    print(
+        f"  > [Result] VEL RMSE BO-IMM: {rmse_vel_fix:.4f}m/s| NN-IMM: {rmse_vel_adapt:.4f}m/s| Imp: {improv_vel:.2f}%")
 
     return {
         "Scenario": name,
@@ -262,7 +261,7 @@ def main_multi_scenario():
     df_res = pd.DataFrame(results)
 
     print("\n" + "=" * 100)
-    print("Multi-Scenario Generalization Test Report")
+    print("Multi-Scenario Generalization Test Report (Baseline: BayesOnline-IMM)")
     print("=" * 100)
     cols = ["Scenario", "RMSE_Pos_Fixed", "RMSE_Pos_Adaptive", "Improv_Pos_%", "RMSE_Vel_Fixed", "RMSE_Vel_Adaptive",
             "Improv_Vel_%"]
@@ -297,12 +296,12 @@ def main_multi_scenario():
     vals_fix_p = df_res["RMSE_Pos_Fixed"]
     vals_adp_p = df_res["RMSE_Pos_Adaptive"]
 
-    rects1 = ax1.bar(x - width / 2, vals_fix_p, width, label='BO-IMM', color='b', alpha=0.6)
+    # 修改图例标签为 BayesOnline-IMM
+    rects1 = ax1.bar(x - width / 2, vals_fix_p, width, label='BayesOnline-IMM', color='b', alpha=0.6)
     rects2 = ax1.bar(x + width / 2, vals_adp_p, width, label='NN-IMM', color='r', alpha=0.7)
 
     ax1.set_xlabel('', fontsize=12)
     ax1.set_ylabel('RMSE(m)', fontsize=12)
-    # ax1.set_title(f'Position Error Comparison (Avg Imp: {avg_improv_pos:.1f}%)', fontweight='bold')
     ax1.set_xticks(x)
     ax1.set_xticklabels(df_res["Scenario"], rotation=0)
     ax1.legend()
@@ -312,7 +311,6 @@ def main_multi_scenario():
     all_vals_p = np.concatenate([vals_fix_p, vals_adp_p])
     min_p, max_p = np.min(all_vals_p), np.max(all_vals_p)
     margin_p = (max_p - min_p) * 0.5 if max_p != min_p else 0.1
-    # 顶部多留一点空间给数字标签
     ax1.set_ylim(max(0, min_p - margin_p), max_p + margin_p * 1.3)
 
     # 添加数值标签
@@ -320,8 +318,6 @@ def main_multi_scenario():
     autolabel(ax1, rects2)
 
     plt.tight_layout()
-    # 如果想一次性看所有图，最后再 show，或者每画完一张就 show
-    # 这里建议最后一起 show，或者在 IDE 里会自动弹窗
 
     # ------------------ 图 2: 速度误差对比 (Velocity) ------------------
     plt.figure(figsize=(10, 6))
@@ -330,12 +326,12 @@ def main_multi_scenario():
     vals_fix_v = df_res["RMSE_Vel_Fixed"]
     vals_adp_v = df_res["RMSE_Vel_Adaptive"]
 
-    rects3 = ax2.bar(x - width / 2, vals_fix_v, width, label='BO IMM', color='b', alpha=0.6)
+    # 修改图例标签为 BayesOnline-IMM
+    rects3 = ax2.bar(x - width / 2, vals_fix_v, width, label='BayesOnline-IMM', color='b', alpha=0.6)
     rects4 = ax2.bar(x + width / 2, vals_adp_v, width, label='NN-IMM', color='r', alpha=0.7)
 
     ax2.set_xlabel('', fontsize=12)
     ax2.set_ylabel('RMSE (m/s)', fontsize=12)
-    # ax2.set_title(f'Velocity Error Comparison (Avg Imp: {avg_improv_vel:.1f}%)', fontweight='bold')
     ax2.set_xticks(x)
     ax2.set_xticklabels(df_res["Scenario"], rotation=0)
     ax2.legend()

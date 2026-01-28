@@ -5,6 +5,10 @@ bo-imm:7.6083   bayesOnline:7.0787  adaptive-imm:7.4037  CNN_LSTM-Att:6.6993  CN
 速度RMSE(m/s)
 bo-imm:13.1220   bayesOnline:11.3571  adaptive-imm:12.3714  CNN_LSTM-Att:10.8705  CNN_LSTM:10.9798  CNN:11.6176  LSTM:11.7600  MLP:11.5821 RNN:12.7586 GRU:11.9441
 
+Bo-IMM          | RMSE_p: 7.6089 Var_p: 8.6087 | RMSE_v: 13.1460 Var_v: 31.3003 | RMSE_a: 13.7358 Var_a: 62.3987
+RMCKF             | RMSE_p: 9.8384 Var_p: 15.2648 | RMSE_v: 31.2478 Var_v: 152.8199 | RMSE_a: 50.0564 Var_a: 395.5749
+GPF             | RMSE_p: 20.9111 Var_p: 38.3806 | RMSE_v: 42.4983 Var_v: 277.7484 | RMSE_a: 64.7764 Var_a: 646.2198
+CCPF              | RMSE_p: 10.3964 Var_p: 16.6988 | RMSE_v: 33.3957 Var_v: 169.6015 | RMSE_a: 53.9586 Var_a: 441.4079
 
 traj2:
 位置RMSE(m)

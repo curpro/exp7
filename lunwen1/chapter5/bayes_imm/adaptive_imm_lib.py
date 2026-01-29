@@ -85,3 +85,110 @@ class JilkovAdaptiveIMM(IMMFilterEnhanced):
                 self.trans_prob[i, :] = np.ones(self.M) / self.M
 
         return x_out, likelihood
+
+
+class PaperCompressionRatioIMM(IMMFilterEnhanced):
+    """
+    论文《Adaptive IMM Algorithm Based on Variational Inference ...》(AIMM-VI) 中
+    **模型概率转移矩阵自适应更新**部分的复现实现（对应论文第 3.5 节，公式 (35)-(38)）。
+
+    注意：
+    - 你要求 IMM 核心结构(三模型 CV/CA/CT、滤波更新)不能改：这里严格继承 IMMFilterEnhanced，
+      只在每次 update() 结束后更新 self.trans_prob (Markov 转移矩阵)。
+    - 论文里使用“增广状态”(含姿态角) + 变分推断(VI) 估计 kinematic state。
+      在你的飞机点目标场景里，我们直接把你现有的 9 维状态
+      [x,vx,ax, y,vy,ay, z,vz,az] 当作“增广状态”，并用各模型的 KF 更新结果作为 x_j^k。
+
+    公式对应关系（与你的代码变量）：
+    - x_j^k      -> self.x[j]          (第 j 个模型的后验状态)
+    - x^k        -> x_out              (IMM 融合输出)
+    - x_o,j^{k+1}-> 由当前 (x_i^k, mu_i^k, G_k) 做一次 interact/mixing 得到
+    - A_j^k      = x_o,j^{k+1} - x_j^k
+    - B_j^k      = x^k - x_j^k
+    - lambda_j^k = ||A_j^k|| / ||B_j^k||
+    - G_new(i,j) = (lambda_i/lambda_j)^l * G_old(i,j)
+
+    参数：
+    - l: 论文中的调整因子 l∈[0,1]（建议 0.2~0.8；过大可能导致矩阵震荡）
+    - min_prob: 防止转移矩阵出现 0（数值稳定）
+    - lambda_clip: 裁剪 lambda，避免极端比值造成数值爆炸
+    """
+
+    def __init__(self,
+                 transition_probabilities,
+                 initial_state,
+                 initial_cov,
+                 r_cov=None,
+                 l: float = 0.5,
+                 eps: float = 1e-12,
+                 min_prob: float = 1e-6,
+                 lambda_clip=(1e-3, 1e3)):
+        super().__init__(transition_probabilities, initial_state, initial_cov, r_cov)
+        self.l = float(l)
+        self.eps = float(eps)
+        self.min_prob = float(min_prob)
+        self.lambda_clip = lambda_clip
+
+    def _compute_xo_next(self) -> np.ndarray:
+        """计算 x_o,j^{k+1}：使用当前时刻(k)的后验 (x_i^k, mu_i^k) 和当前 G_k 进行一次交互混合。"""
+        c_bar = np.dot(self.trans_prob.T, self.model_probs)  # shape (M,)
+        mixing_probs = (self.trans_prob * self.model_probs[:, None]) / (c_bar + self.eps)  # i->j conditional
+        x_mixed = np.zeros_like(self.x)
+        for j in range(self.M):
+            for i in range(self.M):
+                x_mixed[j] += mixing_probs[i, j] * self.x[i]
+        return x_mixed
+
+    def _update_transition_matrix(self, lambdas: np.ndarray):
+        """按论文 Eq.(38) 更新转移矩阵，并做行归一化保证每行和为 1。"""
+        lam = np.asarray(lambdas, dtype=float)
+
+        # 裁剪，避免极端 lambda 比值导致数值爆炸
+        if self.lambda_clip is not None:
+            lam_min, lam_max = self.lambda_clip
+            lam = np.clip(lam, lam_min, lam_max)
+
+        G_old = self.trans_prob
+        G_new = np.zeros_like(G_old)
+
+        for i in range(self.M):
+            for j in range(self.M):
+                ratio = lam[i] / (lam[j] + self.eps)
+                G_new[i, j] = (ratio ** self.l) * G_old[i, j]
+
+        # 防止出现 0
+        if self.min_prob is not None and self.min_prob > 0:
+            G_new = np.maximum(G_new, self.min_prob)
+
+        # 行归一化（概率转移矩阵每行和为 1）
+        for i in range(self.M):
+            row_sum = np.sum(G_new[i, :])
+            if row_sum <= self.eps or not np.isfinite(row_sum):
+                # fallback：退回旧矩阵该行
+                row = np.maximum(G_old[i, :], self.min_prob)
+                G_new[i, :] = row / np.sum(row)
+            else:
+                G_new[i, :] /= row_sum
+
+        # 保持原数组引用不变（更稳妥）
+        self.trans_prob[:] = G_new
+
+    def update(self, z, dt):
+        # 1) 先执行标准 IMM 更新（父类：不改你原有 IMM 核心结构）
+        x_out, likelihood = super().update(z, dt)
+
+        # 2) 计算 x_o,j^{k+1}
+        x_o_next = self._compute_xo_next()
+
+        # 3) 计算 lambda_j^k（公式 (35)-(36)）
+        lambdas = np.zeros(self.M, dtype=float)
+        for j in range(self.M):
+            A = x_o_next[j] - self.x[j]
+            B = x_out - self.x[j]
+            lambdas[j] = np.linalg.norm(A) / (np.linalg.norm(B) + self.eps)
+
+        # 4) 用 lambda 更新转移矩阵（公式 (38)）
+        self._update_transition_matrix(lambdas)
+
+        return x_out, likelihood
+

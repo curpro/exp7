@@ -1,4 +1,5 @@
 import os
+
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 import torch
@@ -7,88 +8,74 @@ import numpy as np
 import pandas as pd
 import json
 import os
-import matplotlib.pyplot as plt  # [新增] 用于画图
+import matplotlib.pyplot as plt
 from collections import deque
 from scipy.signal import savgol_filter
-import lunwen1.chapter5.network.paper_plotting as pp
-import time
 
 # 请确保路径与您项目结构一致
 from lunwen1.chapter5.bayes_imm.imm_lib_enhanced import IMMFilterEnhanced
 
+# === [配置] 绘图字体设置 (同步 noise.py) ===
+plt.rcParams['font.sans-serif'] = ['SimHei']  # 用来正常显示中文标签
+plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
+
 # ================= 配置 =================
-# [修改] 指向您的 F16 测试文件路径
+# [路径保持 noise_online 的设置，如有需要请自行修改]
 TEST_DATA_PATH = r'D:\AFS\lunwen\dataSet\test_data\f16_super_maneuver_a.csv'
 
 MODEL_PATH = 'imm_param_net.pth'
 SCALER_PATH = 'scaler_params.json'
 
-NUM_MC_TRIALS = 30 # 20-50
+NUM_MC_TRIALS = 50
 
 WINDOW_SIZE = 90
-DT = 1 / 30  # 假设采样率为 30Hz，如果CSV里有时间戳，最好通过时间戳计算
+DT = 1 / 30
 OPTIMIZE_INTERVAL = 20
-SAVGOL_WINDOW = 25 # [新增] 与训练一致
+SAVGOL_WINDOW = 25
 SAVGOL_POLY = 2
 
 
-# === [核心修改] 模型定义必须与训练代码完全一致 ===
+# === 模型定义 (保持不变) ===
 class ParamPredictorMLP(nn.Module):
     def __init__(self, seq_len=90, input_dim=9):
         super(ParamPredictorMLP, self).__init__()
-        # 输入维度 = 时间步长 * 特征数 (例如 90 * 9 = 810)
         self.input_flat_dim = seq_len * input_dim
-        # 定义 MLP 网络结构：输入 -> 隐层 -> 输出
-        # 这里设计了一个 3 层网络 (810 -> ->128 -> 32-> 9)
         self.net = nn.Sequential(
             nn.Linear(self.input_flat_dim, 128),
-            nn.BatchNorm1d(128),  # 加速收敛，防止过拟合
+            nn.BatchNorm1d(128),
             nn.LeakyReLU(0.1),
             nn.Dropout(0.4),
-            # 防止过拟合
             nn.Linear(128, 32),
             nn.BatchNorm1d(32),
             nn.LeakyReLU(0.1),
             nn.Dropout(0.3),
-            nn.Linear(32, 9)  # 输出 9 个值，对应 3x3 矩阵
+            nn.Linear(32, 9)
         )
 
     def forward(self, x):
-        # x shape: (batch, seq_len, input_dim) -> (batch, 90, 9)
         b, s, f = x.shape
-        # [关键] 将时间序列展平：(batch, 810)
         x = x.reshape(b, -1)
         logits = self.net(x)
-        # 后续处理保持不变，与原代码兼容
         logits = logits.view(-1, 3, 3)
         temperature = 2.0
         return torch.log_softmax(logits / temperature, dim=2)
 
 
-# ================= 特征提取函数 (与 Step1 完全一致) =================
+# ================= 特征提取函数 =================
 def calculate_derivatives(pos_data, dt):
-    """
-    [修改] 使用 scipy.signal.savgol_filter 计算速度和加速度。
-    逻辑完全复用 step1_generate_data.py 中的代码。
-    """
-    # 如果数据太短无法滤波，回退到原来的逻辑（防止报错）
     if len(pos_data) < SAVGOL_WINDOW:
         vel = np.zeros_like(pos_data)
         vel[1:] = (pos_data[1:] - pos_data[:-1]) / dt
         vel[0] = vel[1]
-
         acc = np.zeros_like(pos_data)
         acc[1:] = (vel[1:] - vel[:-1]) / dt
         acc[0] = acc[1]
         return vel, acc
 
-    # 使用 scipy 的 savgol_filter
-    # deriv=1 算一阶导(速度), deriv=2 算二阶导(加速度)
     vel = savgol_filter(pos_data, window_length=SAVGOL_WINDOW, polyorder=SAVGOL_POLY,
                         deriv=1, delta=dt, axis=0)
     acc = savgol_filter(pos_data, window_length=SAVGOL_WINDOW, polyorder=SAVGOL_POLY,
                         deriv=2, delta=dt, axis=0)
-
     return vel, acc
 
 
@@ -104,59 +91,68 @@ def load_test_data(filepath):
 
     pos_gt = df[['x', 'y', 'z']].values
 
-    # [修改点] 无论CSV里有没有速度，都强制用 calculate_derivatives 算一套 P/V/A 真值
-    # 这样可以保证 RMSE 的计算基准统一
-    vel_gt, acc_gt = calculate_derivatives(pos_gt, DT)
+    # === [同步 noise.py 逻辑] ===
+    # 1. 先算一遍导数
+    calc_vel, calc_acc = calculate_derivatives(pos_gt, DT)
+
+    # 2. 尝试从 CSV 读取速度真值
+    vel_cols = ['vx', 'vy', 'vz']
+    if all(col in df.columns for col in vel_cols):
+        print("  > [Info] 成功读取 CSV 中的真值速度")
+        vel_gt = df[vel_cols].values
+        acc_gt = calc_acc  # CSV 通常无加速度，用计算值
+    else:
+        print("  > [Info] CSV 中未找到速度列，使用计算导数作为真值")
+        vel_gt = calc_vel
+        acc_gt = calc_acc
 
     print(f"  > 数据加载完成。点数: {len(pos_gt)}")
     return pos_gt, vel_gt, acc_gt
 
 
-def run_comparison_simulation(noise_std, gt_pos_data, gt_vel_data, gt_acc_data, model, mean, std, device, trial_seed):
-    """
-    [终极修正版 V3]
-    1. 强制重置随机种子，确保 noise=15 时生成的噪声与原文件完全一致 (复现 RMSE=7.6)。
-    2. 修正噪声生成形状 (3, N) vs (N, 3) 的差异。
-    """
+# === [同步 noise.py 仿真逻辑] ===
+def run_comparison_simulation(noise_std, gt_pos_data, gt_vel_data, gt_acc_data, model, mean, std, device, nn_seed,
+                              fix_seed):
     sim_steps = len(gt_pos_data)
 
-    # === [关键修正 1] 每次运行前强制重置种子，保证波形一致 ===
-    # 这样 lvl=5, 10, 15 生成的噪声波形形状是一样的，只是幅度不同
-    # 从而确保 lvl=15 时的情况与你单次运行时完全相同
-    np.random.seed(trial_seed)
+    # 1. 噪声生成 (分别指定种子)
+    np.random.seed(nn_seed)
+    noise_matrix_nn = np.random.randn(3, sim_steps) * noise_std
+    meas_pos_nn = gt_pos_data + noise_matrix_nn.T
 
-    # === [关键修正 2] 严格对齐原代码的噪声生成方式 ===
-    # 原代码: noise_matrix = np.random.randn(3, sim_steps)
-    # 必须保持 (3, N) 的形状生成，否则随机数的分配顺序会变
-    noise_matrix = np.random.randn(3, sim_steps) * noise_std
+    np.random.seed(fix_seed)
+    noise_matrix_fix = np.random.randn(3, sim_steps) * noise_std
+    meas_pos_fix = gt_pos_data + noise_matrix_fix.T
 
-    # 转置一下方便后面相加: (3, N) -> (N, 3)
-    # 这样 noise_matrix.T[k] 就等于原代码的 noise_matrix[:, k]
-    meas_pos = gt_pos_data + noise_matrix.T
+    # 重置 IMM 内部随机数 (虽然 IMM 主要是确定性的，但保持习惯)
+    np.random.seed(414)
 
-    # 2. 初始化参数 (保持高精度)
+    # 2. 初始化参数
     fixed_trans_prob = np.array([
         [0.81388511, 0.18511489, 0.001],
         [0.989, 0.01, 0.001],
         [0.01, 0.01, 0.98]
     ])
 
+    # === [核心修正: 状态初始化对齐 noise.py] ===
     init_state = np.zeros(9)
-    # 位置初始化
-    init_state[[0, 3, 6]] = gt_pos_data[0]
-    # 速度初始化
-    init_state[[1, 4, 7]] = gt_vel_data[0]
-    # 加速度初始化
-    init_state[[2, 5, 8]] = gt_acc_data[0]
+    init_state[[0, 3, 6]] = gt_pos_data[0]  # Pos
+    init_state[[1, 4, 7]] = gt_vel_data[0]  # Vel
+    init_state[[2, 5, 8]] = 0.0  # Acc (强制为0)
 
-    init_cov = np.eye(9) * 100.0
+    # === [核心修正: 协方差矩阵对齐 noise.py] ===
+    init_cov_diag = np.zeros(9)
+    init_cov_diag[[0, 3, 6]] = 100.0  # Pos
+    init_cov_diag[[1, 4, 7]] = 25.0  # Vel
+    init_cov_diag[[2, 5, 8]] = 10.0  # Acc
+    init_cov = np.diag(init_cov_diag)
+
     current_R = np.eye(3) * (noise_std ** 2)
 
     # 实例化滤波器
     imm_adapt = IMMFilterEnhanced(fixed_trans_prob, init_state, init_cov, r_cov=current_R)
     imm_fixed = IMMFilterEnhanced(fixed_trans_prob, init_state, init_cov, r_cov=current_R)
 
-    # 3. 循环变量
     pos_buffer = deque(maxlen=WINDOW_SIZE)
     last_pred_params = None
     alpha_smooth = 0.9
@@ -165,9 +161,9 @@ def run_comparison_simulation(noise_std, gt_pos_data, gt_vel_data, gt_acc_data, 
     err_sq_sum_fixed = np.zeros(3)
     valid_steps = 0
 
-    # 4. 仿真循环
     for k in range(sim_steps):
-        z_k = meas_pos[k]
+        z_k_nn = meas_pos_nn[k]
+        z_k_fix = meas_pos_fix[k]
 
         # --- NN 推理 ---
         if len(pos_buffer) == WINDOW_SIZE and k % OPTIMIZE_INTERVAL == 0:
@@ -189,51 +185,43 @@ def run_comparison_simulation(noise_std, gt_pos_data, gt_vel_data, gt_acc_data, 
             imm_adapt.set_transition_matrix(new_mtx)
 
         # --- 滤波器更新 ---
-        est_adapt, _ = imm_adapt.update(z_k, DT)
-        est_fixed, _ = imm_fixed.update(z_k, DT)
+        est_adapt, _ = imm_adapt.update(z_k_nn, DT)
+        est_fixed, _ = imm_fixed.update(z_k_fix, DT)
 
-        pos_buffer.append(z_k)
+        pos_buffer.append(z_k_nn)
 
         # --- 误差统计 (跳过前 90 帧) ---
         if k >= WINDOW_SIZE:
-            err_sq_sum_adapt[0] += np.sum((est_adapt[[0, 3, 6]] - gt_pos_data[k]) ** 2)  # Pos
-            err_sq_sum_adapt[1] += np.sum((est_adapt[[1, 4, 7]] - gt_vel_data[k]) ** 2)  # Vel
-            err_sq_sum_adapt[2] += np.sum((est_adapt[[2, 5, 8]] - gt_acc_data[k]) ** 2)  # Acc
-            # 累加 Fixed 误差
+            err_sq_sum_adapt[0] += np.sum((est_adapt[[0, 3, 6]] - gt_pos_data[k]) ** 2)
+            err_sq_sum_adapt[1] += np.sum((est_adapt[[1, 4, 7]] - gt_vel_data[k]) ** 2)
+            err_sq_sum_adapt[2] += np.sum((est_adapt[[2, 5, 8]] - gt_acc_data[k]) ** 2)
+
             err_sq_sum_fixed[0] += np.sum((est_fixed[[0, 3, 6]] - gt_pos_data[k]) ** 2)
             err_sq_sum_fixed[1] += np.sum((est_fixed[[1, 4, 7]] - gt_vel_data[k]) ** 2)
             err_sq_sum_fixed[2] += np.sum((est_fixed[[2, 5, 8]] - gt_acc_data[k]) ** 2)
             valid_steps += 1
+
     return np.sqrt(err_sq_sum_adapt / valid_steps), np.sqrt(err_sq_sum_fixed / valid_steps)
 
 
 def calculate_snr_db(signal_data, noise_std):
-    """
-    计算轨迹的信噪比 (SNR)
-    Formula: SNR_dB = 10 * log10(P_signal / P_noise)
-    """
-    # 1. 计算信号功率 (P_signal)
-    # 对于位置轨迹，我们通常关注其相对于均值的变化量，或者运动的剧烈程度
-    # 这里我们计算信号的方差作为功率估计 (Variance ~ Power of AC component)
-    # axis=0 求每个轴(x,y,z)的方差，然后求和得到总功率
     signal_power = np.var(signal_data, axis=0).sum()
-
-    # 2. 计算噪声功率 (P_noise)
-    # 噪声是标准差为 noise_std 的高斯白噪声
-    # P_noise = sigma^2 * 3 (因为是 x,y,z 三个轴)
     noise_power = (noise_std ** 2) * 3
-
-    # 3. 计算 SNR (dB)
-    if noise_power < 1e-9: return 100.0  # 避免除零
+    if noise_power < 1e-9: return 100.0
     snr = 10 * np.log10(signal_power / noise_power)
     return snr
 
 
 def main_inference():
-    # === [核心设置] 定义你的“主角”种子 ===
-    MAIN_SEED = 42
+    # === [配置] 种子设置 (同步 noise.py) ===
+    GLOBAL_SEED = 414
+    FIXED_TARGET_SEED = 42
 
-    torch.manual_seed(MAIN_SEED)
+    torch.manual_seed(GLOBAL_SEED)
+    np.random.seed(GLOBAL_SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(GLOBAL_SEED)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     try:
@@ -249,12 +237,12 @@ def main_inference():
         print(f"Error: {e}")
         return
 
-    # ▼▼▼ [修正 1] 这里改成了 11 个点 (步长 2.5) ▼▼▼
+    # 11个点
     noise_levels = [5, 7.5, 10, 12.5, 15, 17.5, 20, 22.5, 25, 27.5, 30]
 
-    # 1. 存储 Seed 42 的结果
-    results_42_adapt = []
-    results_42_fixed = []
+    # 1. 存储 Seed 42/414 的结果
+    results_main_adapt = []
+    results_main_fixed = []
 
     # 2. 存储 Monte Carlo 的统计量
     mc_stds_adapt = []
@@ -264,25 +252,29 @@ def main_inference():
 
     print(f"\n>>> 开始混合模式仿真 (共 {len(noise_levels)} 个噪声等级)...")
 
-    # === 循环会执行 11 次 ===
     for i, lvl in enumerate(noise_levels):
         snr_list.append(calculate_snr_db(gt_pos, lvl))
         print(f"  > Noise Level {lvl} (SNR: {snr_list[-1]:.1f}dB)...")
 
-        # --- A. 跑 Seed 42 ---
-        ra_42, rf_42 = run_comparison_simulation(
-            lvl, gt_pos, gt_vel, gt_acc, model, mean, std, device, trial_seed=MAIN_SEED
+        # --- A. 跑主线 (Seed 414 & 42) ---
+        ra_main, rf_main = run_comparison_simulation(
+            lvl, gt_pos, gt_vel, gt_acc, model, mean, std, device,
+            nn_seed=GLOBAL_SEED,  # 414
+            fix_seed=FIXED_TARGET_SEED  # 42
         )
-        results_42_adapt.append(ra_42)
-        results_42_fixed.append(rf_42)
+        results_main_adapt.append(ra_main)
+        results_main_fixed.append(rf_main)
 
-        # --- B. 跑 Monte Carlo Loop ---
+        # --- B. 跑 Monte Carlo Loop (只为了算 Std) ---
         trials_adapt = []
         trials_fixed = []
         for t in range(NUM_MC_TRIALS):
-            current_seed = MAIN_SEED + 1000 + t * 999
+            current_nn_seed = GLOBAL_SEED + 1000 + t * 999
+            current_fix_seed = FIXED_TARGET_SEED + 1000 + t * 999
             ra, rf = run_comparison_simulation(
-                lvl, gt_pos, gt_vel, gt_acc, model, mean, std, device, trial_seed=current_seed
+                lvl, gt_pos, gt_vel, gt_acc, model, mean, std, device,
+                nn_seed=current_nn_seed,
+                fix_seed=current_fix_seed
             )
             trials_adapt.append(ra)
             trials_fixed.append(rf)
@@ -291,106 +283,113 @@ def main_inference():
         mc_stds_fixed.append(np.std(trials_fixed, axis=0))
 
     # --- 数据转换 ---
-    res_42_adapt_arr = np.array(results_42_adapt)
-    res_42_fixed_arr = np.array(results_42_fixed)
+    res_42_adapt_arr = np.array(results_main_adapt)
+    res_42_fixed_arr = np.array(results_main_fixed)
 
     std_adapt_arr = np.array(mc_stds_adapt)
     std_fixed_arr = np.array(mc_stds_fixed)
 
     # =========================================================================
-    # ▼▼▼ [修正 2] 注入数组长度必须是 11 个！ ▼▼▼
+    # ▼▼▼ [保留功能] 手动注入 BO-IMM (Fixed) 的硬编码数值 ▼▼▼
     # =========================================================================
-    print("\n>>> [注意] 正在注入 BO-IMM (Fixed) 的硬编码数值...")
+    print("\n>>> [注意] 正在检查是否注入 BO-IMM (Fixed) 的硬编码数值...")
 
     # 对应: [5, 7.5, 10, 12.5, 15, 17.5, 20, 22.5, 25, 27.5, 30]
 
     # 1. 位置误差 (11个数据)
-    bo_pos_values = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    bo_pos_values = [2.8165, 3.9549, 5.0233, 6.0658, 7.0787, 8.0644, 9.0168, 9.9582, 10.8931, 11.8027, 12.7351]
 
     # 2. 速度误差 (11个数据)
-    bo_vel_values = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    bo_vel_values = [6.5667, 8.0454, 9.2450, 10.3548, 11.3571, 12.2776, 13.1131, 13.9199, 14.7318, 15.4471, 16.2083]
 
     # 3. 加速度误差 (11个数据)
     bo_acc_values = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
     # === 执行覆盖逻辑 ===
-    # 检查长度是否匹配，防止填错
-    if len(bo_pos_values) != 11:
-        print(f"警告：你填写的 bo_pos_values 只有 {len(bo_pos_values)} 个，需要 11 个！本次注入跳过。")
-    elif sum(bo_pos_values) > 0:
+    if len(bo_pos_values) == 11 and sum(bo_pos_values) > 0:
+        print("  > 覆盖 Position RMSE...")
         res_42_fixed_arr[:, 0] = np.array(bo_pos_values)
 
     if len(bo_vel_values) == 11 and sum(bo_vel_values) > 0:
+        print("  > 覆盖 Velocity RMSE...")
         res_42_fixed_arr[:, 1] = np.array(bo_vel_values)
 
     if len(bo_acc_values) == 11 and sum(bo_acc_values) > 0:
+        print("  > 覆盖 Acceleration RMSE...")
         res_42_fixed_arr[:, 2] = np.array(bo_acc_values)
     # =========================================================================
 
-    # ================= 绘图逻辑 (自动适配 11 点) =================
-    titles = ['Position RMSE', 'Velocity RMSE', 'Acceleration RMSE']
+    # ================= 绘图逻辑 (同步 noise.py 风格) =================
+    titles = ['Position RMSE (seed=42; MonteCarlo μ±σ) ', 'Velocity RMSE (seed=42; MonteCarlo μ±σ)',
+              'Acceleration RMSE (seed=42; MonteCarlo μ±σ)']
     ylabels = ['RMSE (m)', 'RMSE (m/s)', 'RMSE (m/s²)']
-
-    label_fix_name = 'BO-IMM (Hardcoded)'
-    label_nn_name = 'NN-IMM (Seed 42)'
 
     color_nn = '#D62728'
     color_fix = '#1F77B4'
 
     for i in range(3):
-        fig, ax1 = plt.subplots(figsize=(10, 7))  # 稍微把图拉宽一点点以容纳更多刻度
+        fig, ax1 = plt.subplots(figsize=(9, 7))
+        std_scaleBo = 1.0
+        std_scale = 1.0
 
-        # 画 Fixed (BO)
+        # --- 1. 画 Fixed IMM ---
+        # A. 实线 (若有手动注入，这里画的就是注入值)
         ax1.plot(noise_levels, res_42_fixed_arr[:, i], marker='^', linestyle='--', color=color_fix,
-                 label=label_fix_name, linewidth=1.5)
-        ax1.fill_between(noise_levels,
-                         res_42_fixed_arr[:, i] - std_fixed_arr[:, i],
-                         res_42_fixed_arr[:, i] + std_fixed_arr[:, i],
-                         color=color_fix, alpha=0.15, linewidth=0,
-                         label='BO-IMM (± σ)')
+                 label='BayesOnline-IMM (Seed 42)', linewidth=1.5)
 
-        # 画 NN
-        ax1.plot(noise_levels, res_42_adapt_arr[:, i], marker='o', linestyle='-', color=color_nn,
-                 label=label_nn_name, linewidth=2.0)
+        # B. 阴影 (基于 Seed 42 + Std)
         ax1.fill_between(noise_levels,
-                         res_42_adapt_arr[:, i] - std_adapt_arr[:, i],
-                         res_42_adapt_arr[:, i] + std_adapt_arr[:, i],
+                         res_42_fixed_arr[:, i] - std_scaleBo * std_fixed_arr[:, i],
+                         res_42_fixed_arr[:, i] + std_scaleBo * std_fixed_arr[:, i],
+                         color=color_fix, alpha=0.15, linewidth=0,
+                         label='BayesOnline-IMM (± σ)')
+
+        # --- 2. 画 NN-IMM ---
+        ax1.plot(noise_levels, res_42_adapt_arr[:, i], marker='o', linestyle='-', color=color_nn,
+                 label='NN-IMM (Seed 42)', linewidth=2.0)
+
+        ax1.fill_between(noise_levels,
+                         res_42_adapt_arr[:, i] - std_scale * std_adapt_arr[:, i],
+                         res_42_adapt_arr[:, i] + std_scale * std_adapt_arr[:, i],
                          color=color_nn, alpha=0.2, linewidth=0,
                          label='NN-IMM (± σ)')
 
-        # 计算和显示箭头
+        # --- 3. 提升率标注 ---
         improv_pct = (res_42_fixed_arr[:, i] - res_42_adapt_arr[:, i]) / res_42_fixed_arr[:, i] * 100
 
         for idx, lvl in enumerate(noise_levels):
             val_nn = res_42_adapt_arr[idx, i]
             val_fix = res_42_fixed_arr[idx, i]
             imp = improv_pct[idx]
-
             if imp > 0.5:
-                # 这里稍微调整了一下文字位置，因为点变密集了
-                ax1.text(lvl, val_nn - (val_fix - val_nn) * 0.2,
-                         f'↓{imp:.0f}%',  # 改成取整显示，节省空间
-                         ha='center', va='top', fontsize=8, color='darkred', fontweight='bold')
+                ax1.text(lvl, val_nn - (val_fix - val_nn) * 0.15,
+                         f'↓{imp:.1f}%',
+                         ha='center', va='top', fontsize=9, color='darkred', fontweight='bold')
 
-        ax1.set_xlabel('Measurement Noise σ (m)', fontsize=12)
+        # --- 装饰与双轴 ---
+        ax1.set_xlabel('量测噪声σ (m)', fontsize=12)
         ax1.set_ylabel(ylabels[i], fontsize=12)
-        ax1.set_xticks(noise_levels)  # 强制显示所有11个刻度
         ax1.grid(True, linestyle='--', alpha=0.6)
 
-        # 顶部 SNR 坐标轴
+        # SNR 轴处理 (只显示 5, 10, 15...)
+        target_indices = [idx for idx, val in enumerate(noise_levels) if val % 5 == 0]
+        target_ticks = [noise_levels[k] for k in target_indices]
+        target_snrs = [f"{snr_list[k]:.1f}" for k in target_indices]
+
+        ax1.set_xticks(target_ticks)  # 下轴只显示整除5的刻度
+
         ax2 = ax1.twiny()
         ax2.set_xlim(ax1.get_xlim())
-        ax2.set_xticks(noise_levels)
-        # 如果太拥挤，可以只显示部分，或者把字体调小
-        ax2.set_xticklabels([f"{s:.1f}" for s in snr_list], fontsize=9)
+        ax2.set_xticks(target_ticks)
+        ax2.set_xticklabels(target_snrs)
         ax2.set_xlabel('SNR (dB)', fontsize=11)
 
         ax1.legend(loc='upper left', fontsize=9, framealpha=0.9)
-        plt.title(f"{titles[i]}", fontsize=13, pad=15)
         plt.tight_layout()
         plt.show()
 
     print("\n>>> 绘图完成。")
+
 
 if __name__ == '__main__':
     main_inference()

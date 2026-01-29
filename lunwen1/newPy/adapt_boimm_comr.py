@@ -5,7 +5,7 @@ from matplotlib.patches import Rectangle
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes, BboxConnector
 from matplotlib.transforms import Bbox, TransformedBbox
 from lunwen1.chapter5.bayes_imm.imm_lib_enhanced import IMMFilterEnhanced
-from lunwen1.chapter5.bayes_imm.adaptive_imm_lib import JilkovAdaptiveIMM
+from lunwen1.chapter5.bayes_imm.adaptive_imm_lib import PaperCompressionRatioIMM
 import lunwen1.chapter5.network.paper_plotting as pp
 
 
@@ -232,7 +232,7 @@ def main():
     # 4. 初始化滤波器
     print("正在初始化滤波器...")
     imm_bo = IMMFilterEnhanced(trans_pa, initial_state, initial_cov, r_cov=r_cov)
-    imm_adp = JilkovAdaptiveIMM(trans_adp, initial_state, initial_cov, r_cov=r_cov, window_len=45)
+    imm_adp = PaperCompressionRatioIMM(trans_adp, initial_state, initial_cov, r_cov=r_cov, l=0.1)
 
     # 5. 运行滤波
     print("正在运行 Bo-IMM ...")
@@ -262,11 +262,22 @@ def main():
 
     EVAL_START_IDX = 80
     # 打印统计结果
+    # 打印统计结果
     def print_stats(name, dist_err_p, dist_err_v, dist_err_a):
+        # 计算 RMSE
         rmse_p = np.sqrt(np.mean(dist_err_p[EVAL_START_IDX:] ** 2))
         rmse_v = np.sqrt(np.mean(dist_err_v[EVAL_START_IDX:] ** 2))
         rmse_a = np.sqrt(np.mean(dist_err_a[EVAL_START_IDX:] ** 2))
-        print(f'{name:<10} | RMSE_p: {rmse_p:.4f} | RMSE_v: {rmse_v:.4f} | RMSE_a: {rmse_a:.4f}')
+
+        # 计算 方差 (Variance)
+        var_p = np.var(dist_err_p[EVAL_START_IDX:])
+        var_v = np.var(dist_err_v[EVAL_START_IDX:])
+        var_a = np.var(dist_err_a[EVAL_START_IDX:])
+
+        # 打印输出 (包含 Var)
+        print(f'{name:<12} | RMSE_p: {rmse_p:.4f}, Var_p: {var_p:.4f} | '
+              f'RMSE_v: {rmse_v:.4f}, Var_v: {var_v:.4f} | '
+              f'RMSE_a: {rmse_a:.4f}, Var_a: {var_a:.4f}')
 
     print("-" * 100)
     print("真实误差统计 (Position, Velocity, Acceleration):")
@@ -275,7 +286,7 @@ def main():
     print("-" * 100)
 
 
-    save_filename = 'res_data/Jilkovadpt/adp_results.npz'
+    save_filename = 'res_data/adp_results.npz'
     print(f">>> 正在保存结果数据到: {save_filename} ...")
 
     # 构造时间轴

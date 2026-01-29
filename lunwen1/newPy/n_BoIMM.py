@@ -43,7 +43,7 @@ def draw_combined_figure(data_dict, title_text, y_label, best_idx, window_size):
     fig, ax = plt.subplots(figsize=(10, 6), dpi=120)
 
     min_len = min(len(v) for v in data_dict.values())
-    time_axis = np.arange(min_len) * DT
+    time_axis = np.arange(min_len)
 
     all_global_values = []
     local_max_val = 0
@@ -69,8 +69,9 @@ def draw_combined_figure(data_dict, title_text, y_label, best_idx, window_size):
     # 2. 设置 Y 轴
     global_data_max = np.percentile(all_global_values, 99.5) if all_global_values else 1.0
     ax.set_ylim(0, global_data_max * 2.5)
-    ax.set_title(title_text, fontsize=14, fontweight='bold')
-    ax.set_xlabel('Time (s)', fontsize=12)
+    # ax.set_title(title_text, fontsize=14, fontweight='bold')
+    ax.set_xlabel('步数', fontsize=12)
+    ax.set_xlim(plot_x[0], plot_x[-1])
     ax.set_ylabel(y_label, fontsize=12)
     ax.grid(True, linestyle='--', alpha=0.3)
     ax.legend(loc='upper right', framealpha=0.95, shadow=True)
@@ -92,7 +93,7 @@ def draw_combined_figure(data_dict, title_text, y_label, best_idx, window_size):
     axins.set_xlim(0, window_size)
     if local_vals_inset: axins.set_ylim(0, max(local_vals_inset) * 1.15)
     axins.grid(True, linestyle=':', alpha=0.5)
-    axins.set_xlabel('Step (k)', fontsize=10)
+    axins.set_xlabel('步数', fontsize=10)
 
     # 4. 连接线
     box_x0 = time_axis[zoom_start]
@@ -263,7 +264,11 @@ def main():
         rmse_p = np.sqrt(np.mean(dist_err_p[EVAL_START_IDX:] ** 2))
         rmse_v = np.sqrt(np.mean(dist_err_v[EVAL_START_IDX:] ** 2))
         rmse_a = np.sqrt(np.mean(dist_err_a[EVAL_START_IDX:] ** 2))
-        print(f'{name:<10} | RMSE_p: {rmse_p:.4f} | RMSE_v: {rmse_v:.4f} | RMSE_a: {rmse_a:.4f}')
+
+        var_p = np.var(dist_err_p[EVAL_START_IDX:])
+        var_v = np.var(dist_err_v[EVAL_START_IDX:])
+        var_a = np.var(dist_err_a[EVAL_START_IDX:])
+        print(f'{name:<10} | RMSE_p: {rmse_p:.4f} Var_p: {var_p:.4f} | RMSE_v: {rmse_v:.4f} Var_v: {var_v:.4f} | RMSE_a: {rmse_a:.4f} Var_a: {var_a:.4f}')
 
     print("-" * 100)
     print("真实误差统计 (Position, Velocity, Acceleration):")
@@ -284,7 +289,7 @@ def main():
 
 
     PLOT_START = 80
-    t_axis = np.arange(num_steps) * DT
+    t_axis = np.arange(num_steps)
     t_plot = t_axis[PLOT_START:]
 
 
@@ -296,9 +301,10 @@ def main():
     plt.plot(t_plot, dist_err_098[PLOT_START:], color='orange', label='0.98-IMM', alpha=0.6)
     plt.plot(t_plot, dist_err_bo[PLOT_START:], color=[0, 0.85, 0], label='Bo-IMM', linewidth=2)
 
-    plt.title(f'位置误差对比 (Position RMSE)')
+    # plt.title(f'位置误差对比 (Position RMSE)')
     plt.xlabel('时间 (s)')
     plt.ylabel('误差 (m)')
+    plt.xlim(t_plot[0], t_plot[-1])
     plt.legend(fontsize=12)
     plt.grid(True, alpha=0.3)
 
@@ -309,9 +315,10 @@ def main():
     plt.plot(t_plot, vel_err_098[PLOT_START:], color='orange', label='0.98-IMM', alpha=0.6)
     plt.plot(t_plot, vel_err_bo[PLOT_START:], color=[0, 0.85, 0], label='Bo-IMM', linewidth=2)
 
-    plt.title('速度误差对比 (Velocity RMSE)')
+    # plt.title('速度误差对比 (Velocity RMSE)')
     plt.xlabel('时间 (s)')
     plt.ylabel('误差 (m/s)')
+    plt.xlim(t_plot[0], t_plot[-1])
     plt.legend(loc='upper right', framealpha=1.0, fontsize=12)
     plt.grid(True, alpha=0.3)
 
@@ -322,9 +329,10 @@ def main():
     plt.plot(t_plot, acc_err_098[PLOT_START:], color='orange', label='0.98-IMM', alpha=0.6)
     plt.plot(t_plot, acc_err_bo[PLOT_START:], color=[0, 0.85, 0], label='Bo-IMM', linewidth=2)
 
-    plt.title('加速度误差对比 (Acceleration RMSE)')
+    # plt.title('加速度误差对比 (Acceleration RMSE)')
     plt.xlabel('时间 (s)')
     plt.ylabel('误差 (m/s^2)')
+    plt.xlim(t_plot[0], t_plot[-1])
     plt.legend(loc='upper right', framealpha=1.0, fontsize=12)
     plt.grid(True, alpha=0.3)
 
@@ -397,7 +405,7 @@ def main():
     ax.set_xlabel('X (m)')
     ax.set_ylabel('Y (m)')
     ax.set_zlabel('Z (m)')
-    ax.set_title('三维轨迹跟踪效果')
+    # ax.set_title('三维轨迹跟踪效果')
     ax.legend()
 
     print("正在寻找满足特定性能排序 [Bo > 0.98 > 0.6 > 0.8] 的最佳区域...")
@@ -549,12 +557,12 @@ def main():
         }
 
         print("\n>>> 生成 Combined Plot (Pos)...")
-        fig_comb_pos = draw_combined_figure(data_pos, 'Position Error', 'Position Error (m)', best_win_idx,
+        fig_comb_pos = draw_combined_figure(data_pos, 'Position Error', '位置误差 (m)', best_win_idx,
                                             ZOOM_WIN_SIZE)
         fig_comb_pos.show()
 
         print(">>> 生成 Combined Plot (Vel)...")
-        fig_comb_vel = draw_combined_figure(data_vel, 'Velocity Error', 'Velocity Error (m/s)', best_win_idx,
+        fig_comb_vel = draw_combined_figure(data_vel, 'Velocity Error', '速度误差 (m/s)', best_win_idx,
                                             ZOOM_WIN_SIZE)
         fig_comb_vel.show()
 
@@ -564,19 +572,19 @@ def main():
 
     # 封装数据以便循环绘图
     plot_data_map = {
-        'Position Error (m)': {
+        '位置误差 (m)': {
             'Bo-IMM': dist_err_bo[slice_idx],
             '0.98-IMM': dist_err_098[slice_idx],
             '0.6-IMM': dist_err_06[slice_idx],
             '0.8-IMM': dist_err_08[slice_idx]
         },
-        'Velocity Error (m/s)': {
+        '速度误差 (m/s)': {
             'Bo-IMM': vel_err_bo[slice_idx],
             '0.98-IMM': vel_err_098[slice_idx],
             '0.6-IMM': vel_err_06[slice_idx],
             '0.8-IMM': vel_err_08[slice_idx]
         },
-        'Acceleration Error (m/s^2)': {
+        '加速度误差 (m/s^2)': {
             'Bo-IMM': acc_err_bo[slice_idx],
             '0.98-IMM': acc_err_098[slice_idx],
             '0.6-IMM': acc_err_06[slice_idx],
@@ -587,7 +595,7 @@ def main():
     # 4. 绘制 3x1 子图
 
     # metric_names = ['Position Error (m)', 'Velocity Error (m/s)', 'Acceleration Error (m/s^2)']
-    metric_names = ['Position Error (m)', 'Velocity Error (m/s)']
+    metric_names = ['位置误差 (m)', '速度误差 (m/s)']
 
     for i, metric in enumerate(metric_names):
         plt.figure(figsize=(10, 6))

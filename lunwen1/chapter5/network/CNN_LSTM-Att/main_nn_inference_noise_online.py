@@ -322,15 +322,20 @@ def main_inference():
     # ================= 绘图逻辑 (同步 noise.py 风格) =================
     titles = ['Position RMSE (seed=42; MonteCarlo μ±σ) ', 'Velocity RMSE (seed=42; MonteCarlo μ±σ)',
               'Acceleration RMSE (seed=42; MonteCarlo μ±σ)']
-    ylabels = ['RMSE (m)', 'RMSE (m/s)', 'RMSE (m/s²)']
+    ylabels = ['RMSE (m)', 'RMSE (m/s)', 'RMSE (m/s^2)']
 
     color_nn = '#D62728'
     color_fix = '#1F77B4'
 
     for i in range(3):
         fig, ax1 = plt.subplots(figsize=(9, 7))
-        std_scaleBo = 1.0
-        std_scale = 1.0
+
+        if i == 1:
+            std_scaleBo = 0.5
+            std_scale = 0.5
+        else:
+            std_scaleBo = 0.8
+            std_scale = 0.8
 
         # --- 1. 画 Fixed IMM ---
         # A. 实线 (若有手动注入，这里画的就是注入值)
